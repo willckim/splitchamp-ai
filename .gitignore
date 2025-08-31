@@ -1,9 +1,9 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# Learn more: https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
 # dependencies
 node_modules/
 
-# Expo
+# Expo / React Native
 .expo/
 dist/
 web-build/
@@ -21,7 +21,7 @@ expo-env.d.ts
 # Metro
 .metro-health-check*
 
-# debug
+# debug logs
 npm-debug.*
 yarn-debug.*
 yarn-error.*
@@ -30,9 +30,14 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
-
-# typescript
-*.tsbuildinfo
+# Local env files (never commit real secrets)
+.env
+*.env
+*.env.*
 split-backend/.env
+
+# BUT keep safe templates
+!*.env.example
+
+# TypeScript
+*.tsbuildinfo
