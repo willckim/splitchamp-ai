@@ -36,7 +36,10 @@
       "expo-router",
       "expo-camera",
       "expo-image-picker",
-      "sentry-expo"
+      "sentry-expo",
+      "expo-mail-composer",
+      "expo-web-browser",
+      "expo-asset"
     ],
     "extra": {
       "apiBase": "https://your-backend.example.com"
