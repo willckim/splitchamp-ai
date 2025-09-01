@@ -20,8 +20,10 @@ import SummaryCard from '../src/components/SummaryCard';
 import { useSplitStore } from '../src/store/useSplitStore';
 import type { Participant, Expense } from '../src/types';
 import { styles } from '../src/styles';
+import { useTheme } from '../src/providers/theme'; // ⬅️ add
 
 export default function Home() {
+  const { theme } = useTheme(); // ⬅️ add
   const hasHydrated = useSplitStore(s => s._hasHydrated);
 
   const participants = useSplitStore(s => s.participants);
@@ -30,7 +32,6 @@ export default function Home() {
   const removeParticipant = useSplitStore(s => s.removeParticipant);
   const resetAll = useSplitStore(s => s.resetAll);
 
-  // First-launch intro modal
   const [showIntro, setShowIntro] = useState(false);
   useEffect(() => {
     (async () => {
@@ -45,29 +46,29 @@ export default function Home() {
 
   if (!hasHydrated) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator />
-        <Text style={{ marginTop: 8 }}>Loading your data…</Text>
+      <View style={[styles.loading, { backgroundColor: theme.bg }]}>
+        <ActivityIndicator color={theme.accent} />
+        <Text style={{ marginTop: 8, color: theme.text }}>Loading your data…</Text>
       </View>
     );
   }
 
   return (
     <>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.gap16}>
+      <ScrollView contentContainerStyle={[styles.container, { backgroundColor: theme.bg }]}>
+        <View style={[styles.gap16, { backgroundColor: theme.bg }]}>
           <ParticipantForm />
           <ExpenseForm />
 
           {/* Participants Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Participants</Text>
+          <View style={[styles.section, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Participants</Text>
             {participants.length === 0 ? (
-              <Text>None yet</Text>
+              <Text style={{ color: theme.text }}>None yet</Text>
             ) : (
               participants.map((p: Participant) => (
                 <View key={p.id} style={styles.row}>
-                  <Text>{p.name}</Text>
+                  <Text style={{ color: theme.text }}>{p.name}</Text>
                   <Pressable onPress={() => removeParticipant(p.id)} style={styles.dangerBtn}>
                     <Text style={styles.btnText}>Remove</Text>
                   </Pressable>
@@ -77,14 +78,14 @@ export default function Home() {
           </View>
 
           {/* Expenses Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Expenses</Text>
+          <View style={[styles.section, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Expenses</Text>
             {expenses.length === 0 ? (
-              <Text>No expenses added yet.</Text>
+              <Text style={{ color: theme.text }}>No expenses added yet.</Text>
             ) : (
               expenses.map((e: Expense) => (
                 <View key={e.id} style={styles.row}>
-                  <Text>
+                  <Text style={{ color: theme.text }}>
                     {e.description} — ${e.amount.toFixed(2)}
                   </Text>
                   <Pressable onPress={() => removeExpense(e.id)} style={styles.dangerBtn}>
@@ -125,14 +126,14 @@ export default function Home() {
 
       {/* Intro Modal */}
       <Modal visible={showIntro} animationType="fade" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>👋 Welcome to SplitChamp AI</Text>
-            <Text style={styles.modalText}>• Add participants</Text>
-            <Text style={styles.modalText}>• Add expenses</Text>
-            <Text style={styles.modalText}>• We auto-calc who owes who</Text>
-            <Pressable onPress={closeIntro} style={styles.modalBtn}>
-              <Text style={styles.modalBtnText}>Get Started</Text>
+        <View style={[styles.modalOverlay, { backgroundColor: '#00000080' }]}>
+          <View style={[styles.modalCard, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>👋 Welcome to SplitChamp AI</Text>
+            <Text style={[styles.modalText, { color: theme.text }]}>• Add participants</Text>
+            <Text style={[styles.modalText, { color: theme.text }]}>• Add expenses</Text>
+            <Text style={[styles.modalText, { color: theme.text }]}>• We auto-calc who owes who</Text>
+            <Pressable onPress={closeIntro} style={[styles.modalBtn, { backgroundColor: theme.accent }]}>
+              <Text style={[styles.modalBtnText, { color: '#fff' }]}>Get Started</Text>
             </Pressable>
           </View>
         </View>
@@ -149,21 +150,21 @@ function NavCard(
     ...props
   }: { label: string; style?: PressableProps['style'] } & Omit<PressableProps, 'style'>
 ) {
+  const { theme } = useTheme(); // ⬅️ add theme for card bg/text
   const mergedStyle =
     typeof externalStyle === 'function'
       ? (state: PressableStateCallbackType): StyleProp<ViewStyle> => [
-          styles.navCard,
+          { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1, borderRadius: 12, padding: 12 },
           externalStyle(state),
         ]
-      : ([styles.navCard, externalStyle] as StyleProp<ViewStyle>);
+      : ([
+          { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1, borderRadius: 12, padding: 12 },
+          externalStyle,
+        ] as StyleProp<ViewStyle>);
 
   return (
-    <Pressable
-      {...props}
-      style={mergedStyle}
-      accessibilityRole="button"
-    >
-      <Text style={styles.navCardText}>{label}</Text>
+    <Pressable {...props} style={mergedStyle} accessibilityRole="button">
+      <Text style={{ color: theme.text, fontWeight: '600' }}>{label}</Text>
     </Pressable>
   );
 }
