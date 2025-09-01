@@ -20,10 +20,10 @@ import SummaryCard from '../src/components/SummaryCard';
 import { useSplitStore } from '../src/store/useSplitStore';
 import type { Participant, Expense } from '../src/types';
 import { styles } from '../src/styles';
-import { useTheme } from '../src/providers/theme'; // ⬅️ add
+import { useTheme } from '../src/providers/theme';
 
 export default function Home() {
-  const { theme } = useTheme(); // ⬅️ add
+  const { theme } = useTheme();
   const hasHydrated = useSplitStore(s => s._hasHydrated);
 
   const participants = useSplitStore(s => s.participants);
@@ -116,10 +116,6 @@ export default function Home() {
             <Pressable onPress={resetAll} style={[styles.navCard, styles.dangerBg]}>
               <Text style={styles.navCardText}>Reset</Text>
             </Pressable>
-
-            <Link href="/settings" asChild>
-              <NavCard label="Settings" />
-            </Link>
           </View>
         </View>
       </ScrollView>
@@ -150,7 +146,7 @@ function NavCard(
     ...props
   }: { label: string; style?: PressableProps['style'] } & Omit<PressableProps, 'style'>
 ) {
-  const { theme } = useTheme(); // ⬅️ add theme for card bg/text
+  const { theme } = useTheme();
   const mergedStyle =
     typeof externalStyle === 'function'
       ? (state: PressableStateCallbackType): StyleProp<ViewStyle> => [
