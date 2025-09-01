@@ -32,7 +32,20 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "permissions": ["CAMERA", "READ_MEDIA_IMAGES"]
+      "permissions": [
+        "INTERNET",
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE"
+      ],
+      "intentFilters": [],
+      "enableDangerousExperimentalLeanBuilds": false,
+      "blockedPermissions": [],
+      "softwareKeyboardLayoutMode": "pan",
+      "useNextNotificationsApi": true,
+      "networkSecurityConfig": {
+        "cleartextTrafficPermitted": false
+      }
     },
     "web": { "favicon": "./assets/favicon.png" },
     "plugins": [
@@ -42,6 +55,7 @@
       "expo-asset",
       "expo-camera",
       "expo-image-picker",
+      "expo-image-manipulator",
       ["sentry-expo", { "enableInExpoDevelopment": false }]
     ],
     "extra": {

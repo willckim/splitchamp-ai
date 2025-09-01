@@ -1,13 +1,13 @@
 // app/capture.tsx
 import { useEffect, useState } from 'react';
-import { View, Text, Button, Image, ActivityIndicator, Alert, Switch } from 'react-native';
+import { View, Text, Button, Image, ActivityIndicator, Alert, Switch, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 import { useCameraPermissions } from 'expo-camera';
-import { analyzeReceipt, hasApi } from '@/lib/ai';
+import { analyzeReceiptFromUri, hasApi } from '@/lib/ai';
 import { useSplitStore } from '@/store/useSplitStore';
 import { useTheme } from '../src/providers/theme';
 
@@ -35,7 +35,9 @@ export default function CaptureReceipt() {
       }
       const res = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
-        quality: 0.8,
+        quality: 1,              // capture full; we’ll compress in-app
+        exif: false,
+          // iOS produces HEIC—manipulator will convert to JPEG
       });
       if (!res.canceled) setPhotoUri(res.assets[0].uri);
     } catch (err) {
@@ -45,9 +47,11 @@ export default function CaptureReceipt() {
 
   const onPickFromGallery = async () => {
     try {
+      // On Android 13+, expo-image-picker will request READ_MEDIA_IMAGES if needed
       const res = await ImagePicker.launchImageLibraryAsync({
         allowsMultipleSelection: false,
-        quality: 0.8,
+        quality: 1,
+        exif: false,
       });
       if (!res.canceled) setPhotoUri(res.assets[0].uri);
     } catch (err) {
@@ -96,10 +100,11 @@ export default function CaptureReceipt() {
         return;
       }
 
+      // Resize + compress -> JPEG (keeps upload fast and predictable)
       const manipulated = await ImageManipulator.manipulateAsync(
         photoUri,
         [{ resize: { width: 1600 } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: false }
       );
 
       const postInfo = await FileSystem.getInfoAsync(manipulated.uri, { size: true });
@@ -111,11 +116,9 @@ export default function CaptureReceipt() {
         }
       }
 
-      const base64 = await FileSystem.readAsStringAsync(manipulated.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // 👉 New: send as multipart file (no base64 in memory)
+      const result = await analyzeReceiptFromUri(manipulated.uri);
 
-      const result = await analyzeReceipt(base64);
       if (!result?.items?.length) {
         Alert.alert(
           'No items found',
@@ -130,8 +133,8 @@ export default function CaptureReceipt() {
       const defaultPayer = participantsState[0]?.id ?? '';
 
       if (asItemized) {
-        const items = result.items.map((it: any) => ({
-          id: `${Math.random()}`,
+        const items = result.items.map((it: any, idx: number) => ({
+          id: `${Date.now()}_${idx}`,
           description: it.description ?? 'Item',
           amount: Number(it.amount ?? 0),
           splitAmong: everyone,
@@ -155,9 +158,9 @@ export default function CaptureReceipt() {
 
         Alert.alert('Parsed!', `Imported 1 itemized expense with ${items.length} items.`);
       } else {
-        result.items.forEach((it: any) => {
+        result.items.forEach((it: any, idx: number) => {
           addExpense({
-            description: it.description ?? 'Item',
+            description: it.description ?? `Item ${idx + 1}`,
             amount: Number(it.amount ?? 0),
             paidBy: it.paidById ?? defaultPayer,
             splitAmong: it.splitAmongIds?.length ? it.splitAmongIds : everyone,
