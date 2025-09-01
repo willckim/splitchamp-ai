@@ -1,4 +1,5 @@
 // src/lib/ai.ts
+import Constants from 'expo-constants';
 
 export type ReceiptItem = { description: string; amount: number };
 export type ReceiptParse = {
@@ -10,12 +11,21 @@ export type ReceiptParse = {
   items: ReceiptItem[];
 };
 
-// Prefer an env var at build time. No default localhost in production.
-const RAW_API_BASE = process.env.EXPO_PUBLIC_API_BASE?.trim() || null;
+function readApiBase(): string | null {
+  const fromEnv = process.env.EXPO_PUBLIC_API_BASE?.trim();
+  const extra = (Constants?.expoConfig?.extra ?? {}) as any;
+  const fromExtra = typeof extra.apiBase === 'string' ? extra.apiBase.trim() : '';
+  const raw = fromEnv || fromExtra || '';
+  return raw ? raw.replace(/\/+$/, '') : null;
+}
 
-// Normalize (remove trailing slash)
-export const apiBase: string | null = RAW_API_BASE ? RAW_API_BASE.replace(/\/+$/, '') : null;
+export const apiBase: string | null = readApiBase();
 export const hasApi = !!apiBase;
+
+if (__DEV__) {
+  // eslint-disable-next-line no-console
+  console.log('[SplitChamp] apiBase =', apiBase);
+}
 
 /**
  * Parse and normalize server response which may be either JSON already
@@ -40,7 +50,6 @@ export async function analyzeReceiptFromUri(fileUri: string): Promise<ReceiptPar
     throw err;
   }
 
-  // React Native fetch supports FormData with { uri, name, type }
   const form = new FormData();
   form.append('file', {
     uri: fileUri,
@@ -50,10 +59,7 @@ export async function analyzeReceiptFromUri(fileUri: string): Promise<ReceiptPar
 
   const res = await fetch(`${apiBase}/analyze-receipt`, {
     method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      // NOTE: Do NOT set Content-Type here; RN sets the correct multipart boundary.
-    },
+    headers: { Accept: 'application/json' },
     body: form,
   });
 
