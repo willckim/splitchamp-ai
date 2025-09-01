@@ -15,34 +15,45 @@
       "backgroundColor": "#ffffff"
     },
     "assetBundlePatterns": ["**/*"],
+
     "ios": {
-      "bundleIdentifier": "com.yourorg.splitchamp",
+      "bundleIdentifier": "com.willckim.splitchamp",
       "buildNumber": "1",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "We use the camera to capture receipts for AI parsing.",
+        "NSPhotoLibraryUsageDescription": "We use your photo library to import receipt photos."
+      }
     },
+
     "android": {
-      "package": "com.yourorg.splitchamp",
+      "package": "com.willckim.splitchamp",
       "versionCode": 1,
       "edgeToEdgeEnabled": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "permissions": []
+      "permissions": ["CAMERA", "READ_MEDIA_IMAGES"]
     },
+
     "web": {
       "favicon": "./assets/favicon.png"
     },
+
     "plugins": [
       "expo-router",
       "expo-mail-composer",
       "expo-web-browser",
       "expo-asset",
+      "expo-camera",
+      "expo-image-picker",
       [
         "sentry-expo",
         { "enableInExpoDevelopment": false }
       ]
     ],
+
     "extra": {
       "apiBase": "https://your-backend.example.com",
       "supportEmail": "williamckim11@gmail.com",
