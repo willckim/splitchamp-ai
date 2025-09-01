@@ -7,42 +7,56 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "scheme": "splitchampai",
+    "scheme": "splitchamp",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "assetBundlePatterns": ["**/*"],
+
     "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSCameraUsageDescription": "We use the camera to capture receipts for AI parsing."
-      }
+      "bundleIdentifier": "com.yourorg.splitchamp",
+      "buildNumber": "1",
+      "supportsTablet": true
     },
+
     "android": {
+      "package": "com.yourorg.splitchamp",
+      "versionCode": 1,
+      "edgeToEdgeEnabled": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
-      "permissions": [
-        "CAMERA"
-      ]
+      "permissions": []
     },
+
     "web": {
       "favicon": "./assets/favicon.png"
     },
+
     "plugins": [
       "expo-router",
-      "expo-camera",
-      "expo-image-picker",
-      "sentry-expo",
       "expo-mail-composer",
       "expo-web-browser",
-      "expo-asset"
+      "expo-asset",
+      [
+        "sentry-expo",
+        {
+          "enableInExpoDevelopment": false
+        }
+      ]
     ],
+
     "extra": {
-      "apiBase": "https://your-backend.example.com"
+      "apiBase": "https://your-backend.example.com",
+      "supportEmail": "support@splitchamp.ai",
+      "privacyUrl": "https://yourusername.github.io/splitchamp-ai/privacy.html",
+      "termsUrl": "https://yourusername.github.io/splitchamp-ai/terms.html",
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
     }
   }
 }
