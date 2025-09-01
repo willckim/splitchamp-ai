@@ -4,8 +4,11 @@ import { View, TextInput, Pressable, Text, Alert } from 'react-native';
 import { useSplitStore } from '@/store/useSplitStore';
 import { styles } from '@/styles';
 import { colors } from '@/ui/theme';
+import { useTheme } from '@/providers/theme';
 
 export default function ExpenseForm() {
+  const { theme } = useTheme();
+
   const participants = useSplitStore(s => s.participants);
   const addExpense = useSplitStore(s => s.addExpense);
 
@@ -68,7 +71,7 @@ export default function ExpenseForm() {
     if (!showHelper) return;
     const sub = Number(subtotalText) || 0;
     const tax = Number(taxText) || 0;
-    const tip = tipPct !== null ? (sub * tipPct) : (Number(tipText) || 0);
+    const tip = tipPct !== null ? sub * tipPct : Number(tipText) || 0;
     const total = sub + tax + tip;
     if (total > 0) setAmountText(total.toFixed(2));
   }, [showHelper, subtotalText, taxText, tipText, tipPct]);
@@ -131,12 +134,14 @@ export default function ExpenseForm() {
         onChangeText={setDescription}
         returnKeyType="next"
         onSubmitEditing={() => amountRef.current?.focus()}
+        placeholderTextColor={`${colors.text}66`}
         style={{
           borderWidth: 1,
           borderColor: colors.ring,
           borderRadius: 10,
           padding: 12,
           backgroundColor: '#fff',
+          color: colors.text,
         }}
       />
 
@@ -150,12 +155,14 @@ export default function ExpenseForm() {
         keyboardType="decimal-pad"
         returnKeyType="done"
         onSubmitEditing={canSubmit ? onAddExpense : undefined}
+        placeholderTextColor={`${colors.text}66`}
         style={{
           borderWidth: 1,
           borderColor: colors.ring,
           borderRadius: 10,
           padding: 12,
           backgroundColor: '#fff',
+          color: colors.text,
         }}
       />
 
@@ -188,6 +195,7 @@ export default function ExpenseForm() {
               onChangeText={onChangeSubtotal}
               inputMode="decimal"
               keyboardType="decimal-pad"
+              placeholderTextColor={`${colors.text}66`}
               style={{
                 flex: 1,
                 borderWidth: 1,
@@ -195,6 +203,7 @@ export default function ExpenseForm() {
                 borderRadius: 10,
                 padding: 12,
                 backgroundColor: '#fff',
+                color: colors.text,
               }}
             />
             <TextInput
@@ -203,6 +212,7 @@ export default function ExpenseForm() {
               onChangeText={onChangeTax}
               inputMode="decimal"
               keyboardType="decimal-pad"
+              placeholderTextColor={`${colors.text}66`}
               style={{
                 width: 120,
                 borderWidth: 1,
@@ -210,6 +220,7 @@ export default function ExpenseForm() {
                 borderRadius: 10,
                 padding: 12,
                 backgroundColor: '#fff',
+                color: colors.text,
               }}
             />
           </View>
@@ -225,8 +236,8 @@ export default function ExpenseForm() {
                   android_ripple={{ color: 'rgba(2,6,23,0.06)' }}
                   style={{
                     borderWidth: 1,
-                    borderColor: active ? colors.pillOn : colors.ringStrong,
-                    backgroundColor: active ? colors.pillOn : 'transparent',
+                    borderColor: active ? theme.accent : colors.ringStrong,
+                    backgroundColor: active ? theme.accent : 'transparent',
                     paddingHorizontal: 12,
                     paddingVertical: 8,
                     borderRadius: 999,
@@ -245,6 +256,7 @@ export default function ExpenseForm() {
               onChangeText={onChangeTip}
               inputMode="decimal"
               keyboardType="decimal-pad"
+              placeholderTextColor={`${colors.text}66`}
               style={{
                 flex: 1,
                 borderWidth: 1,
@@ -252,6 +264,7 @@ export default function ExpenseForm() {
                 borderRadius: 10,
                 padding: 12,
                 backgroundColor: '#fff',
+                color: colors.text,
               }}
             />
           </View>
@@ -277,8 +290,8 @@ export default function ExpenseForm() {
                 android_ripple={{ color: 'rgba(2,6,23,0.06)' }}
                 style={{
                   borderWidth: 1,
-                  borderColor: active ? colors.pillOn : colors.ringStrong,
-                  backgroundColor: active ? colors.pillOn : 'transparent',
+                  borderColor: active ? theme.accent : colors.ringStrong,
+                  backgroundColor: active ? theme.accent : 'transparent',
                   paddingHorizontal: 12,
                   paddingVertical: 8,
                   borderRadius: 999,
@@ -311,8 +324,8 @@ export default function ExpenseForm() {
             style={{
               alignSelf: 'flex-start',
               borderWidth: 1,
-              borderColor: everyoneSelected ? colors.pillOn : colors.ringStrong,
-              backgroundColor: everyoneSelected ? colors.pillOn : 'transparent',
+              borderColor: everyoneSelected ? theme.accent : colors.ringStrong,
+              backgroundColor: everyoneSelected ? theme.accent : 'transparent',
               paddingHorizontal: 12,
               paddingVertical: 8,
               borderRadius: 999,
@@ -340,16 +353,16 @@ export default function ExpenseForm() {
                   android_ripple={{ color: 'rgba(2,6,23,0.06)' }}
                   style={{
                     borderWidth: 1,
-                    borderColor: checked ? colors.ringStrong : colors.ring,
-                    backgroundColor: checked ? '#F1F5F9' : 'transparent',
+                    borderColor: checked ? theme.accent : colors.ringStrong,
+                    backgroundColor: checked ? theme.accent : 'transparent',
                     paddingHorizontal: 12,
                     paddingVertical: 8,
-                    borderRadius: 10,
+                    borderRadius: 999,
                   }}
                 >
                   <Text
                     style={{
-                      color: colors.text,
+                      color: checked ? '#fff' : colors.text,
                       fontWeight: checked ? '800' : '600',
                     }}
                   >

@@ -11,10 +11,10 @@ OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set. Put it in .env or your environment.")
 
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")  # good for vision + JSON
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")  # vision + JSON mode
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
-RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "60"))
-RATE_WINDOW_SEC = int(os.environ.get("RATE_WINDOW_SEC", "3600"))
+RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "60"))              # requests per window per IP
+RATE_WINDOW_SEC = int(os.environ.get("RATE_WINDOW_SEC", "3600"))  # 1 hour
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))  # 10MB
 
 # --- App / CORS ---
@@ -30,7 +30,6 @@ app.add_middleware(
 
 # --- Tiny best-effort rate limit (in-memory) ---
 _BUCKET: dict[str, tuple[int, int]] = {}  # ip -> (reset_epoch, count)
-
 def _rate_check(ip: str) -> None:
     now = int(time.time())
     reset, cnt = _BUCKET.get(ip, (now + RATE_WINDOW_SEC, 0))
@@ -75,66 +74,39 @@ def _to_b64_jpeg(raw: bytes) -> str:
     return base64.b64encode(raw).decode("utf-8")
 
 def _call_openai(image_b64: str) -> dict:
-    # ✅ Use response_format (json_schema) with Responses API
+    """
+    Uses Chat Completions with JSON mode (stable).
+    Sends the image as a data: URL and returns a single JSON object.
+    """
     payload = {
-        "model": MODEL,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "ReceiptExtraction",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "merchant": {"type": ["string", "null"]},
-                        "date": {"type": ["string", "null"]},
-                        "total": {"type": ["number", "null"]},
-                        "tax": {"type": ["number", "null"]},
-                        "tip": {"type": ["number", "null"]},
-                        "items": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "description": {"type": "string"},
-                                    "amount": {"type": "number"}
-                                },
-                                "required": ["description", "amount"],
-                                "additionalProperties": False
-                            }
-                        }
-                    },
-                    "required": ["items"],
-                    "additionalProperties": False
-                },
-                "strict": True
-            }
-        },
-        "input": [
+        "model": MODEL,                          # e.g., "gpt-4o-mini"
+        "response_format": {"type": "json_object"},  # JSON mode
+        "temperature": 0,
+        "messages": [
             {
                 "role": "user",
                 "content": [
                     {
-                        "type": "input_text",
+                        "type": "text",
                         "text": (
-                            "You are a precise receipt parser. Extract clear line items with prices, "
-                            "and include tax/tip/merchant/date when present. "
-                            "Return only JSON that matches the schema."
+                            "Extract line items from this receipt photo and return a SINGLE JSON object "
+                            "with fields: { merchant?: string, date?: string, total?: number, tax?: number, "
+                            "tip?: number, items: [{ description: string, amount: number }] }. "
+                            "Do not include any text outside the JSON."
                         ),
                     },
                     {
-                        "type": "input_image",
-                        "image_data": image_b64,
-                        "media_type": "image/jpeg"
-                    }
+                        "type": "image_url",
+                        "image_url": { "url": f"data:image/jpeg;base64,{image_b64}" },
+                    },
                 ],
             }
         ],
-        "temperature": 0
     }
 
     try:
         r = requests.post(
-            "https://api.openai.com/v1/responses",
+            "https://api.openai.com/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {OPENAI_KEY}",
                 "Content-Type": "application/json",
@@ -146,27 +118,14 @@ def _call_openai(image_b64: str) -> dict:
         raise HTTPException(status_code=502, detail=f"OpenAI network error: {e}") from e
 
     if r.status_code != 200:
-        detail = r.text[:1200]
-        raise HTTPException(status_code=502, detail=f"OpenAI error ({r.status_code}): {detail}")
+        raise HTTPException(status_code=502, detail=f"OpenAI error ({r.status_code}): {r.text[:1200]}")
 
     try:
         data = r.json()
+        content = data["choices"][0]["message"]["content"]  # JSON string (due to JSON mode)
+        return json.loads(content)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Invalid JSON from OpenAI: {e}")
-
-    # Prefer convenience field; otherwise, extract from structured output
-    if isinstance(data, dict) and data.get("output_text"):
-        try:
-            return json.loads(data["output_text"])
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Failed to parse output_text JSON: {e}")
-
-    # Fallback: navigate to text block
-    try:
-        text = data["output"][0]["content"][0]["text"]
-        return json.loads(text)
-    except Exception:
-        raise HTTPException(status_code=502, detail="Unexpected OpenAI output format")
+        raise HTTPException(status_code=502, detail=f"Failed to parse JSON: {e}")
 
 def _coerce_amounts(parsed: dict) -> dict:
     if not isinstance(parsed, dict) or "items" not in parsed or not isinstance(parsed["items"], list):
