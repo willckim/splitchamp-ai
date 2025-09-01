@@ -14,4 +14,4 @@ Pro features (if purchased) are billed via the app store or our website and are 
 The app provides estimates; verify amounts before settling.
 
 ## Contact
-support@yourapp.com
+williamckim11@gmail.com
