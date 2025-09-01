@@ -1,5 +1,4 @@
 // src/lib/ai.ts
-import Constants from 'expo-constants';
 
 export type ReceiptItem = { description: string; amount: number };
 export type ReceiptParse = {
@@ -11,14 +10,25 @@ export type ReceiptParse = {
   items: ReceiptItem[];
 };
 
-// prefer EXPO_PUBLIC_API_BASE if present, else app.json extra, else localhost
-const API_BASE =
-  process.env.EXPO_PUBLIC_API_BASE ||
-  (Constants.expoConfig?.extra as any)?.apiBase ||
-  'http://127.0.0.1:3000';
+// Prefer an env var at build time. No default localhost in production.
+const RAW_API_BASE = process.env.EXPO_PUBLIC_API_BASE?.trim() || null;
 
+// Normalize (remove trailing slash)
+export const apiBase: string | null = RAW_API_BASE ? RAW_API_BASE.replace(/\/+$/, '') : null;
+export const hasApi = !!apiBase;
+
+/**
+ * Analyze receipt image (base64 JPEG).
+ * Throws { code: 'NO_API' } if no backend is configured.
+ */
 export async function analyzeReceipt(imageBase64: string): Promise<ReceiptParse> {
-  const res = await fetch(`${API_BASE}/analyze-receipt`, {
+  if (!apiBase) {
+    const err: any = new Error('No API configured');
+    err.code = 'NO_API';
+    throw err;
+  }
+
+  const res = await fetch(`${apiBase}/analyze-receipt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image_base64: imageBase64 }),

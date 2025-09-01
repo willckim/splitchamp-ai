@@ -4,13 +4,15 @@ import { View, Text, Button, Image, ActivityIndicator, Alert, Switch } from 'rea
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as WebBrowser from 'expo-web-browser';
+import Constants from 'expo-constants';
 import { useCameraPermissions } from 'expo-camera';
-import { analyzeReceipt } from '@/lib/ai';
+import { analyzeReceipt, hasApi } from '@/lib/ai';
 import { useSplitStore } from '@/store/useSplitStore';
-import { useTheme } from '../src/providers/theme'; // ⬅️ add
+import { useTheme } from '../src/providers/theme';
 
 export default function CaptureReceipt() {
-  const { theme } = useTheme(); // ⬅️ add
+  const { theme } = useTheme();
   const [permission, requestPermission] = useCameraPermissions();
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,6 +57,24 @@ export default function CaptureReceipt() {
 
   const onAnalyze = async () => {
     if (!photoUri) return;
+
+    // No backend? Offer waitlist instead of failing.
+    if (!hasApi) {
+      const waitlistUrl = (Constants.expoConfig as any)?.extra?.waitlistUrl;
+      if (waitlistUrl) {
+        Alert.alert(
+          'Coming soon',
+          'AI receipt parsing requires our cloud service. Join the Pro waitlist to get early access.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Join Waitlist', onPress: () => WebBrowser.openBrowserAsync(waitlistUrl) },
+          ]
+        );
+      } else {
+        Alert.alert('Coming soon', 'AI receipt parsing requires our cloud service. This build has it disabled.');
+      }
+      return;
+    }
 
     const participants = useSplitStore.getState().participants;
     if (participants.length === 0) {
@@ -105,8 +125,9 @@ export default function CaptureReceipt() {
         return;
       }
 
-      const everyone = participants.map(p => p.id);
-      const defaultPayer = participants[0]?.id ?? '';
+      const participantsState = useSplitStore.getState().participants;
+      const everyone = participantsState.map(p => p.id);
+      const defaultPayer = participantsState[0]?.id ?? '';
 
       if (asItemized) {
         const items = result.items.map((it: any) => ({
@@ -164,11 +185,21 @@ export default function CaptureReceipt() {
 
       {/* Import mode toggle */}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Switch value={asItemized} onValueChange={setAsItemized} trackColor={{ true: theme.accent, false: '#bbb' }} />
+        <Switch
+          value={asItemized}
+          onValueChange={setAsItemized}
+          trackColor={{ true: theme.accent, false: '#bbb' }}
+        />
         <Text style={{ color: theme.text }}>
           {asItemized ? 'Import as one itemized expense (with tip/tax)' : 'Import as separate expenses'}
         </Text>
       </View>
+
+      {!hasApi && (
+        <Text style={{ color: theme.text }}>
+          AI parsing is coming soon. Use manual entry or tap Analyze to join the Pro waitlist.
+        </Text>
+      )}
 
       {!photoUri ? (
         <View style={{ gap: 12 }}>
@@ -187,7 +218,12 @@ export default function CaptureReceipt() {
               <Button title="Retake" onPress={() => setPhotoUri(null)} color={theme.accent} />
             </View>
             <View style={{ flex: 1, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: theme.border }}>
-              <Button title="Analyze with AI" onPress={onAnalyze} color={theme.accent} />
+              <Button
+                title="Analyze with AI"
+                onPress={onAnalyze}
+                color={theme.accent}
+                disabled={!hasApi || loading}
+              />
             </View>
           </View>
         </View>
