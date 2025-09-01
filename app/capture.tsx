@@ -225,7 +225,7 @@ export default function CaptureReceipt() {
                 title="Analyze with AI"
                 onPress={onAnalyze}
                 color={theme.accent}
-                disabled={!hasApi || loading}
+                disabled={loading}
               />
             </View>
           </View>
