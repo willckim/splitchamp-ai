@@ -1,7 +1,6 @@
-import { View, Text, Pressable, Alert } from 'react-native';
+import { View, Text, Pressable, Alert, Linking } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as MailComposer from 'expo-mail-composer';
-import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 
 const Row = ({ title, onPress, testID }: { title: string; onPress: () => void; testID?: string }) => (
@@ -23,18 +22,26 @@ const Row = ({ title, onPress, testID }: { title: string; onPress: () => void; t
 
 export default function Settings() {
   const router = useRouter();
+
   const version =
     Constants.expoConfig?.version ??
     Constants.manifest2?.extra?.version ??
     '1.0.0';
+
+  // Prefer value from app.json -> expo.extra.supportEmail, fallback to your Gmail
+  const supportEmail =
+    (Constants.expoConfig as any)?.extra?.supportEmail ??
+    'williamckim11@gmail.com';
+
+  const supportSubject = 'SplitChamp AI — Support';
 
   async function contactSupport() {
     try {
       const isAvailable = await MailComposer.isAvailableAsync();
       if (isAvailable) {
         await MailComposer.composeAsync({
-          recipients: ['support@yourapp.com'],
-          subject: 'SplitChamp AI — Support',
+          recipients: [supportEmail],
+          subject: supportSubject,
           body:
             `Hi team,\n\n` +
             `Issue/Question:\n\n` +
@@ -42,10 +49,11 @@ export default function Settings() {
             `App version: ${version}\n`,
         });
       } else {
-        // graceful fallback to a browser-based email composer
-        await WebBrowser.openBrowserAsync(
-          `mailto:support@yourapp.com?subject=${encodeURIComponent('SplitChamp AI — Support')}`
-        );
+        // Fallback to mailto: (opens default mail app chooser)
+        const mailto = `mailto:${encodeURIComponent(supportEmail)}?subject=${encodeURIComponent(
+          supportSubject
+        )}`;
+        await Linking.openURL(mailto);
       }
     } catch (e) {
       Alert.alert('Could not open email', String(e));

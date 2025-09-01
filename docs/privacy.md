@@ -19,8 +19,8 @@ This Privacy Policy explains how SplitChamp AI (“we”, “us”, “our”) c
 
 ## Your Choices
 - You can delete local data in Settings (if implemented).
-- Contact us at support@yourapp.com to request deletion of any cloud data (if/when cloud sync exists).
+- Contact us at williamckim11@gmail.com to request deletion of any cloud data (if/when cloud sync exists).
 
 ## Contact
-support@yourapp.com
+williamckim11@gmail.com
 
