@@ -1,6 +1,7 @@
 {
   "expo": {
     "name": "SplitChamp AI",
+    "owner": "willckim",
     "slug": "splitchamp-ai",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -47,10 +48,10 @@
     "extra": {
       "apiBase": "https://your-backend.example.com",
       "supportEmail": "williamckim11@gmail.com",
-      "privacyUrl": "https://yourusername.github.io/splitchamp-ai/privacy.html",
-      "termsUrl": "https://yourusername.github.io/splitchamp-ai/terms.html",
+      "privacyUrl": "https://willckim.github.io/splitchamp-ai/privacy.html",
+      "termsUrl": "https://willckim.github.io/splitchamp-ai/terms.html",
       "eas": {
-        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+        "projectId": "a2d2f44e-30e7-4821-b662-ac4da56c424d"
       }
     }
   }
