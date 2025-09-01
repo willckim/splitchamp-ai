@@ -15,7 +15,6 @@
       "backgroundColor": "#ffffff"
     },
     "assetBundlePatterns": ["**/*"],
-
     "ios": {
       "bundleIdentifier": "com.willckim.splitchamp",
       "buildNumber": "1",
@@ -25,7 +24,6 @@
         "NSPhotoLibraryUsageDescription": "We use your photo library to import receipt photos."
       }
     },
-
     "android": {
       "package": "com.willckim.splitchamp",
       "versionCode": 1,
@@ -36,11 +34,7 @@
       },
       "permissions": ["CAMERA", "READ_MEDIA_IMAGES"]
     },
-
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
-
+    "web": { "favicon": "./assets/favicon.png" },
     "plugins": [
       "expo-router",
       "expo-mail-composer",
@@ -48,21 +42,14 @@
       "expo-asset",
       "expo-camera",
       "expo-image-picker",
-      [
-        "sentry-expo",
-        { "enableInExpoDevelopment": false }
-      ]
+      ["sentry-expo", { "enableInExpoDevelopment": false }]
     ],
-
     "extra": {
-      "apiBase": "https://your-backend.example.com",
       "supportEmail": "williamckim11@gmail.com",
       "privacyUrl": "https://willckim.github.io/splitchamp-ai/privacy.html",
       "termsUrl": "https://willckim.github.io/splitchamp-ai/terms.html",
       "waitlistUrl": "https://forms.gle/B1oJoa56EnAavgBD6",
-      "eas": {
-        "projectId": "a2d2f44e-30e7-4821-b662-ac4da56c424d"
-      }
+      "eas": { "projectId": "a2d2f44e-30e7-4821-b662-ac4da56c424d" }
     }
   }
 }
