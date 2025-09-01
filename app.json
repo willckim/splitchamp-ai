@@ -43,19 +43,11 @@
       "blockedPermissions": [],
       "softwareKeyboardLayoutMode": "pan",
       "useNextNotificationsApi": true,
-      "networkSecurityConfig": {
-        "cleartextTrafficPermitted": false
-      }
+      "usesCleartextTraffic": false
     },
     "web": { "favicon": "./assets/favicon.png" },
     "plugins": [
       "expo-router",
-      "expo-mail-composer",
-      "expo-web-browser",
-      "expo-asset",
-      "expo-camera",
-      "expo-image-picker",
-      "expo-image-manipulator",
       ["sentry-expo", { "enableInExpoDevelopment": false }]
     ],
     "extra": {
