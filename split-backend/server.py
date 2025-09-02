@@ -18,12 +18,33 @@ RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "60"))
 RATE_WINDOW_SEC = int(os.environ.get("RATE_WINDOW_SEC", "3600"))
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))  # 10MB
 
-# Azure (optional)
+# ---------- Azure (optional) ----------
 _raw_endpoint = (os.environ.get("AZURE_ENDPOINT") or "").strip()
 AZURE_ENDPOINT = _raw_endpoint.rstrip("/") if _raw_endpoint else ""  # normalize
 AZURE_KEY = os.environ.get("AZURE_KEY")
-AZURE_USE_RECEIPT = os.environ.get("AZURE_USE_RECEIPT", "false").lower() == "true"
-AZURE_USE_READ = os.environ.get("AZURE_USE_READ", "false").lower() == "true"
+
+def _to_bool(v: str | None, default: bool = False) -> bool:
+    """
+    Robust .env boolean parser:
+    - Strips whitespace
+    - Ignores trailing inline comments (# ...)
+    - Accepts true/false/1/0/yes/no/on/off (case-insensitive)
+    """
+    if v is None:
+        return default
+    clean = v.strip()
+    if "#" in clean:  # remove inline comment: "true   # comment"
+        clean = clean.split("#", 1)[0].strip()
+    s = clean.lower()
+    if s in {"true", "1", "yes", "y", "on"}:
+        return True
+    if s in {"false", "0", "no", "n", "off"}:
+        return False
+    return default
+
+AZURE_USE_RECEIPT = _to_bool(os.environ.get("AZURE_USE_RECEIPT"), True)
+AZURE_USE_READ = _to_bool(os.environ.get("AZURE_USE_READ"), True)
+
 AZURE_CONFIGURED = bool(AZURE_ENDPOINT and AZURE_KEY)
 AZURE_API_VERSION_DOCS = "2024-07-31"   # Document Intelligence
 AZURE_API_VERSION_VISION = "2024-02-01" # Vision Image Analysis (Read)
@@ -76,12 +97,14 @@ class AnalyzeResp(BaseModel):
 # --- Healthcheck ---
 @app.get("/health")
 def health():
+    azure_on = AZURE_CONFIGURED and (AZURE_USE_RECEIPT or AZURE_USE_READ)
     return {
         "ok": True,
         "model": MODEL,
         "azure_receipt": AZURE_USE_RECEIPT,
         "azure_read": AZURE_USE_READ,
         "azure_configured": AZURE_CONFIGURED,
+        "azure_on": azure_on,   # convenience flag for UI
     }
 
 # ---- Helpers ----

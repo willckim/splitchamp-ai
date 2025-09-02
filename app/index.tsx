@@ -21,15 +21,6 @@ import { useSplitStore } from '../src/store/useSplitStore';
 import type { Participant, Expense } from '../src/types';
 import { styles } from '../src/styles';
 import { useTheme } from '../src/providers/theme';
-import { apiBase, hasApi } from '../src/lib/ai';
-
-type Health = {
-  ok: boolean;
-  model?: string;
-  azure_receipt?: boolean;
-  azure_read?: boolean;
-  azure_configured?: boolean;
-};
 
 export default function Home() {
   const { theme } = useTheme();
@@ -42,8 +33,6 @@ export default function Home() {
   const resetAll = useSplitStore(s => s.resetAll);
 
   const [showIntro, setShowIntro] = useState(false);
-  const [health, setHealth] = useState<Health | null>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
 
   // Intro once
   useEffect(() => {
@@ -51,27 +40,6 @@ export default function Home() {
       const seen = await AsyncStorage.getItem('seen_intro');
       if (!seen) setShowIntro(true);
     })();
-  }, []);
-
-  // Load backend /health
-  const loadHealth = async () => {
-    if (!hasApi) {
-      setHealth(null);
-      return;
-    }
-    try {
-      setHealthLoading(true);
-      const res = await fetch(`${apiBase}/health`, { method: 'GET' });
-      const data = (await res.json()) as Health;
-      setHealth(data);
-    } catch {
-      setHealth({ ok: false });
-    } finally {
-      setHealthLoading(false);
-    }
-  };
-  useEffect(() => {
-    loadHealth();
   }, []);
 
   const closeIntro = async () => {
@@ -88,75 +56,12 @@ export default function Home() {
     );
   }
 
-  // Small helper for the status chip
-  const StatusChip = () => {
-    if (!hasApi) {
-      return (
-        <View
-          style={{
-            borderRadius: 10,
-            paddingVertical: 8,
-            paddingHorizontal: 12,
-            backgroundColor: '#FEF3C7',
-            borderWidth: 1,
-            borderColor: '#F59E0B',
-            alignSelf: 'flex-start',
-          }}
-        >
-          <Text style={{ color: '#78350F', fontWeight: '700' }}>
-            API not configured — set EXPO_PUBLIC_API_BASE in app.json
-          </Text>
-        </View>
-      );
-    }
-
-    const ok = !!health?.ok;
-    const azureOn = !!(health?.azure_configured && (health?.azure_receipt || health?.azure_read));
-    const bg = ok ? '#DCFCE7' : '#FEE2E2';
-    const border = ok ? '#16A34A' : '#DC2626';
-    const textColor = ok ? '#065F46' : '#7F1D1D';
-
-    return (
-      <Pressable onPress={loadHealth} android_ripple={{ color: 'rgba(2,6,23,0.06)' }}>
-        <View
-          style={{
-            borderRadius: 10,
-            paddingVertical: 8,
-            paddingHorizontal: 12,
-            backgroundColor: bg,
-            borderWidth: 1,
-            borderColor: border,
-            alignSelf: 'flex-start',
-            flexDirection: 'row',
-            gap: 8,
-          }}
-        >
-          {healthLoading ? (
-            <ActivityIndicator size="small" color={border} />
-          ) : (
-            <>
-              <Text style={{ color: textColor, fontWeight: '800' }}>
-                AI: {health?.model ?? '—'}
-              </Text>
-              <Text style={{ color: textColor }}>•</Text>
-              <Text style={{ color: textColor, fontWeight: '700' }}>
-                Azure: {azureOn ? 'on' : 'off'}
-              </Text>
-              <Text style={{ color: textColor }}> (tap to refresh)</Text>
-            </>
-          )}
-        </View>
-      </Pressable>
-    );
-  };
-
   return (
     <>
       <ScrollView contentContainerStyle={[styles.container, { backgroundColor: theme.bg }]}>
         <View style={[styles.gap16, { backgroundColor: theme.bg }]}>
-          {/* Backend status chip */}
-          <StatusChip />
 
+          {/* Participant + Expense forms */}
           <ParticipantForm />
           <ExpenseForm />
 
