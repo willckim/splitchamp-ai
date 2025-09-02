@@ -50,11 +50,26 @@ function coerceReceipt(data: any): ReceiptParse {
   return parsed as ReceiptParse;
 }
 
+/** Build query string without using new URL() (safer in RN) */
 function withQuery(baseUrl: string, opts?: AnalyzeOptions): string {
   if (!opts || typeof opts.includeTaxTip === 'undefined') return baseUrl;
-  const url = new URL(baseUrl);
-  url.searchParams.set('include_tax_tip', String(!!opts.includeTaxTip));
-  return url.toString();
+  const sep = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${sep}include_tax_tip=${opts.includeTaxTip ? 'true' : 'false'}`;
+}
+
+/** Read server error body, but mask HTML error pages (e.g., 502 proxy) */
+async function readErrorBodySafely(res: Response): Promise<string> {
+  let text = '';
+  try {
+    text = await res.text();
+  } catch {
+    text = '';
+  }
+  const trimmed = text.trim().toLowerCase();
+  if (trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html')) {
+    return 'Server returned an HTML error page (likely 502 from host).';
+  }
+  return text;
 }
 
 /** Multipart upload (best) */
@@ -85,7 +100,7 @@ export async function analyzeReceiptFromUri(
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readErrorBodySafely(res);
     throw new Error(`AI analyze failed: ${res.status} ${text}`);
   }
   const data = await res.json();
@@ -112,7 +127,7 @@ export async function analyzeReceipt(
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readErrorBodySafely(res);
     throw new Error(`AI analyze failed: ${res.status} ${text}`);
   }
   const data = await res.json();
