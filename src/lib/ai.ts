@@ -12,11 +12,20 @@ export type ReceiptParse = {
 };
 
 function readApiBase(): string | null {
-  const fromEnv = process.env.EXPO_PUBLIC_API_BASE?.trim();
-  const extra = (Constants?.expoConfig?.extra ?? {}) as any;
-  const fromExtra = typeof extra.apiBase === 'string' ? extra.apiBase.trim() : '';
-  const raw = fromEnv || fromExtra || '';
-  return raw ? raw.replace(/\/+$/, '') : null;
+  // 1) Public env (preferred)
+  const fromEnv = (process.env as any)?.EXPO_PUBLIC_API_BASE?.toString().trim();
+
+  // 2) app.json/app.config extra (support both keys)
+  const extra = (Constants?.expoConfig?.extra ?? {}) as Record<string, any>;
+  const fromExtraPublic = typeof extra.EXPO_PUBLIC_API_BASE === 'string'
+    ? extra.EXPO_PUBLIC_API_BASE.trim()
+    : '';
+  const fromExtraLegacy = typeof extra.apiBase === 'string'
+    ? extra.apiBase.trim()
+    : '';
+
+  const raw = fromEnv || fromExtraPublic || fromExtraLegacy || '';
+  return raw ? raw.replace(/\/+$/, '') : null; // strip trailing slash(es)
 }
 
 export const apiBase: string | null = readApiBase();
@@ -27,10 +36,7 @@ if (__DEV__) {
   console.log('[SplitChamp] apiBase =', apiBase);
 }
 
-/**
- * Parse and normalize server response which may be either JSON already
- * or { output_text: "<json string>" } from an LLM wrapper.
- */
+/** Parse and normalize server response */
 function coerceReceipt(data: any): ReceiptParse {
   const parsed = typeof data?.output_text === 'string' ? JSON.parse(data.output_text) : data;
   if (!parsed?.items || !Array.isArray(parsed.items)) {
@@ -39,10 +45,7 @@ function coerceReceipt(data: any): ReceiptParse {
   return parsed as ReceiptParse;
 }
 
-/**
- * Preferred: Analyze a receipt by sending an image file URI via multipart/form-data.
- * This avoids base64 memory bloat and is faster on device.
- */
+/** Multipart upload (best) */
 export async function analyzeReceiptFromUri(fileUri: string): Promise<ReceiptParse> {
   if (!apiBase) {
     const err: any = new Error('No API configured');
@@ -59,6 +62,7 @@ export async function analyzeReceiptFromUri(fileUri: string): Promise<ReceiptPar
 
   const res = await fetch(`${apiBase}/analyze-receipt`, {
     method: 'POST',
+    // Let RN set the multipart boundary automatically; do NOT set Content-Type manually here.
     headers: { Accept: 'application/json' },
     body: form,
   });
@@ -71,10 +75,7 @@ export async function analyzeReceiptFromUri(fileUri: string): Promise<ReceiptPar
   return coerceReceipt(data);
 }
 
-/**
- * Legacy: Analyze receipt image using base64 JSON body.
- * Kept for backwards compatibility if your backend only accepts JSON.
- */
+/** JSON base64 upload (fallback) */
 export async function analyzeReceipt(imageBase64: string): Promise<ReceiptParse> {
   if (!apiBase) {
     const err: any = new Error('No API configured');
