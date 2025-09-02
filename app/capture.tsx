@@ -1,6 +1,6 @@
 // app/capture.tsx
 import { useEffect, useState } from 'react';
-import { View, Text, Button, Image, ActivityIndicator, Alert, Switch, Platform } from 'react-native';
+import { View, Text, Button, Image, ActivityIndicator, Alert, Switch } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -16,7 +16,12 @@ export default function CaptureReceipt() {
   const [permission, requestPermission] = useCameraPermissions();
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Import mode: one itemized expense vs separate expenses
   const [asItemized, setAsItemized] = useState(true);
+
+  // NEW: Control whether server includes Tax/Tip as items
+  const [includeTaxTip, setIncludeTaxTip] = useState(true);
 
   const addExpense = useSplitStore(s => s.addExpense);
 
@@ -35,9 +40,8 @@ export default function CaptureReceipt() {
       }
       const res = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
-        quality: 1,              // capture full; we’ll compress in-app
+        quality: 1, // capture full; we’ll compress in-app
         exif: false,
-          // iOS produces HEIC—manipulator will convert to JPEG
       });
       if (!res.canceled) setPhotoUri(res.assets[0].uri);
     } catch (err) {
@@ -47,7 +51,6 @@ export default function CaptureReceipt() {
 
   const onPickFromGallery = async () => {
     try {
-      // On Android 13+, expo-image-picker will request READ_MEDIA_IMAGES if needed
       const res = await ImagePicker.launchImageLibraryAsync({
         allowsMultipleSelection: false,
         quality: 1,
@@ -116,8 +119,8 @@ export default function CaptureReceipt() {
         }
       }
 
-      // 👉 New: send as multipart file (no base64 in memory)
-      const result = await analyzeReceiptFromUri(manipulated.uri);
+      // Send as multipart file and pass the includeTaxTip preference
+      const result = await analyzeReceiptFromUri(manipulated.uri, { includeTaxTip });
 
       if (!result?.items?.length) {
         Alert.alert(
@@ -133,6 +136,7 @@ export default function CaptureReceipt() {
       const defaultPayer = participantsState[0]?.id ?? '';
 
       if (asItemized) {
+        // Build itemized entries
         const items = result.items.map((it: any, idx: number) => ({
           id: `${Date.now()}_${idx}`,
           description: it.description ?? 'Item',
@@ -140,9 +144,21 @@ export default function CaptureReceipt() {
           splitAmong: everyone,
         }));
 
+        // Avoid double-counting: if server already included Tax/Tip as items,
+        // don't add top-level tax/tip again.
+        const hasTaxItem = result.items.some(
+          (it: any) => String(it.description || '').toLowerCase() === 'tax'
+        );
+        const hasTipItem = result.items.some(
+          (it: any) => String(it.description || '').toLowerCase() === 'tip'
+        );
+
         const itemsTotal = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
-        const tax = Number(result.tax || 0);
-        const tip = Number(result.tip || 0);
+        let tax = Number(result.tax || 0);
+        let tip = Number(result.tip || 0);
+        if (includeTaxTip && hasTaxItem) tax = 0; // already in items
+        if (includeTaxTip && hasTipItem) tip = 0; // already in items
+
         const total = itemsTotal + tax + tip;
 
         addExpense({
@@ -156,8 +172,10 @@ export default function CaptureReceipt() {
           tip,
         });
 
-        Alert.alert('Parsed!', `Imported 1 itemized expense with ${items.length} items.`);
+        const engine = result.engine ? ` (${result.engine})` : '';
+        Alert.alert('Parsed!', `Imported 1 itemized expense with ${items.length} items${engine}.`);
       } else {
+        // Import each line as its own expense (less common, but supported)
         result.items.forEach((it: any, idx: number) => {
           addExpense({
             description: it.description ?? `Item ${idx + 1}`,
@@ -166,7 +184,8 @@ export default function CaptureReceipt() {
             splitAmong: it.splitAmongIds?.length ? it.splitAmongIds : everyone,
           });
         });
-        Alert.alert('Parsed!', `Added ${result.items.length} expense(s).`);
+        const engine = result.engine ? ` (${result.engine})` : '';
+        Alert.alert('Parsed!', `Added ${result.items.length} expense(s)${engine}.`);
       }
     } catch (err: any) {
       const msg = `${err?.message || err}`;
@@ -194,7 +213,19 @@ export default function CaptureReceipt() {
           trackColor={{ true: theme.accent, false: '#bbb' }}
         />
         <Text style={{ color: theme.text }}>
-          {asItemized ? 'Import as one itemized expense (with tip/tax)' : 'Import as separate expenses'}
+          {asItemized ? 'Import as one itemized expense' : 'Import as separate expenses'}
+        </Text>
+      </View>
+
+      {/* NEW: Tip/Tax toggle (controls server query param) */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Switch
+          value={includeTaxTip}
+          onValueChange={setIncludeTaxTip}
+          trackColor={{ true: theme.accent, false: '#bbb' }}
+        />
+        <Text style={{ color: theme.text }}>
+          Split Tip & Tax
         </Text>
       </View>
 
