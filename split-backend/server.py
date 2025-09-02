@@ -3,18 +3,18 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from typing import Optional
 import os, requests, json, time, base64
+from typing import Optional
 
 # --- Config / env ---
 load_dotenv()
 
-OPENAI_KEY = (os.environ.get("OPENAI_API_KEY") or "").strip()
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set. Put it in .env or your environment.")
 
-MODEL = (os.environ.get("OPENAI_MODEL") or "gpt-4o-mini").strip()  # vision + JSON mode
-ALLOWED_ORIGINS = (os.environ.get("ALLOWED_ORIGINS") or "*").strip()
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")  # vision + JSON mode
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "60"))
 RATE_WINDOW_SEC = int(os.environ.get("RATE_WINDOW_SEC", "3600"))
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))  # 10MB
@@ -22,7 +22,7 @@ MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(10 * 1024 * 1024))) 
 # ---------- Azure (optional) ----------
 _raw_endpoint = (os.environ.get("AZURE_ENDPOINT") or "").strip()
 AZURE_ENDPOINT = _raw_endpoint.rstrip("/") if _raw_endpoint else ""  # normalize
-AZURE_KEY = (os.environ.get("AZURE_KEY") or "").strip()              # trimmed!
+AZURE_KEY = os.environ.get("AZURE_KEY")
 
 def _to_bool(v: str | None, default: bool = False) -> bool:
     """Robust .env boolean parser (trims, strips inline '#', accepts true/false/1/0/yes/no/on/off)."""
@@ -32,10 +32,8 @@ def _to_bool(v: str | None, default: bool = False) -> bool:
     if "#" in clean:  # remove inline comment: "true   # comment"
         clean = clean.split("#", 1)[0].strip()
     s = clean.lower()
-    if s in {"true", "1", "yes", "y", "on"}:
-        return True
-    if s in {"false", "0", "no", "n", "off"}:
-        return False
+    if s in {"true", "1", "yes", "y", "on"}:  return True
+    if s in {"false", "0", "no", "n", "off"}: return False
     return default
 
 AZURE_USE_RECEIPT = _to_bool(os.environ.get("AZURE_USE_RECEIPT"), True)
@@ -46,22 +44,8 @@ AZURE_CONFIGURED = bool(AZURE_ENDPOINT and AZURE_KEY)
 AZURE_API_VERSION_DOCS   = "2024-07-31"  # Document Intelligence
 AZURE_API_VERSION_VISION = "2024-02-01"  # Vision Image Analysis (Read)
 
-# Optional: one-off debug probe (set this in env to enable /_env_check)
-ENV_DEBUG_TOKEN = (os.environ.get("ENV_DEBUG_TOKEN") or "").strip()
-
-def _mask(s: str | None, keep: int = 4) -> str:
-    if not s:
-        return "(missing)"
-    return f"{s[:keep]}… ({len(s)} chars)"
-
-# Boot log (masked) so you can confirm envs are present in Render logs
-print("[boot] MODEL:", MODEL)
-print("[boot] AZURE_ENDPOINT:", _mask(AZURE_ENDPOINT))
-print("[boot] AZURE_KEY:", _mask(AZURE_KEY))
-print("[boot] AZURE_CONFIGURED:", AZURE_CONFIGURED, "| USE_RECEIPT:", AZURE_USE_RECEIPT, "| USE_READ:", AZURE_USE_READ)
-
 # --- App / CORS ---
-app = FastAPI(title="SplitChamp AI Backend", version="1.2.2")
+app = FastAPI(title="SplitChamp AI Backend", version="1.2.1")
 origins = [o.strip() for o in ALLOWED_ORIGINS.split(",")] if ALLOWED_ORIGINS else ["*"]
 app.add_middleware(
     CORSMiddleware,
@@ -106,42 +90,22 @@ class AnalyzeResp(BaseModel):
     items: list[ReceiptItem]
     engine: str | None = None   # which path produced the result
 
-# --- Healthcheck & debug ---
+# --- Healthcheck ---
 @app.get("/health")
 def health():
-    reasons = []
-    if not AZURE_ENDPOINT: reasons.append("missing AZURE_ENDPOINT")
-    if not AZURE_KEY: reasons.append("missing AZURE_KEY")
-    azure_configured = bool(AZURE_ENDPOINT and AZURE_KEY)
-    azure_on = azure_configured and (AZURE_USE_RECEIPT or AZURE_USE_READ)
+    azure_on = AZURE_CONFIGURED and (AZURE_USE_RECEIPT or AZURE_USE_READ)
     return {
         "ok": True,
         "model": MODEL,
         "azure_receipt": AZURE_USE_RECEIPT,
         "azure_read": AZURE_USE_READ,
-        "azure_configured": azure_configured,
+        "azure_configured": AZURE_CONFIGURED,
         "azure_on": azure_on,
-        "azure_reason": reasons or None,
     }
 
 @app.get("/")
 def root():
-    return {"name": "SplitChamp AI Backend", "version": "1.2.2", "health": "/health"}
-
-# Optional: locked-down env probe. Hit /_env_check?token=YOUR_TOKEN then remove this before launch.
-@app.get("/_env_check")
-def env_check(token: Optional[str] = None):
-    if not ENV_DEBUG_TOKEN or token != ENV_DEBUG_TOKEN:
-        raise HTTPException(status_code=403, detail="forbidden")
-    return {
-        "AZURE_ENDPOINT_set": bool(AZURE_ENDPOINT),
-        "AZURE_KEY_set": bool(AZURE_KEY),
-        "AZURE_ENDPOINT_masked": _mask(AZURE_ENDPOINT),
-        "AZURE_KEY_masked": _mask(AZURE_KEY),
-        "AZURE_USE_RECEIPT": AZURE_USE_RECEIPT,
-        "AZURE_USE_READ": AZURE_USE_READ,
-        "AZURE_CONFIGURED": AZURE_CONFIGURED,
-    }
+    return {"name": "SplitChamp AI Backend", "version": "1.2.1", "health": "/health"}
 
 # ---- Helpers ----
 def _to_b64_jpeg(raw: bytes) -> str:
@@ -160,16 +124,9 @@ def _coerce_amounts(parsed: dict) -> dict:
     return parsed
 
 def _postprocess_receipt(d: dict, include_tax_tip: bool) -> dict:
-    """
-    Restaurant-friendly post-processing:
-    - Keep meaningful food/drink line items
-    - Merge duplicates
-    - Optionally append Tax/Tip as separate items for split toggles
-    """
+    # Clean & filter rows
     raw_items = d.get("items") or []
     cleaned: list[dict] = []
-
-    # 1) Clean & filter obvious non-food rows
     skip_tokens = {"SUBTOTAL", "CHANGE", "CASH", "CARD", "BALANCE", "AUTH", "TOTAL"}
     for it in raw_items:
         try:
@@ -183,14 +140,14 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool) -> dict:
         except Exception:
             continue
 
-    # 2) Merge duplicates (case-insensitive)
+    # Merge duplicates
     merged: dict[str, float] = {}
     for it in cleaned:
         k = it["description"].strip().lower()
         merged[k] = round(merged.get(k, 0) + it["amount"], 2)
     items_out = [{"description": k.title(), "amount": v} for k, v in merged.items()]
 
-    # 3) Normalize top-level numbers
+    # Top-level numbers
     tax = round(float(d.get("tax") or 0), 2)
     tip = round(float(d.get("tip") or 0), 2)
     sum_items = round(sum(x["amount"] for x in items_out), 2)
@@ -204,7 +161,7 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool) -> dict:
         if abs(total - computed) <= 0.02:
             total = computed
 
-    # 4) Optionally append Tax/Tip as separate line items
+    # Optionally append Tax/Tip as items
     if include_tax_tip:
         if tax > 0:
             items_out.append({"description": "Tax", "amount": tax})
@@ -214,7 +171,7 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool) -> dict:
     return {
         "merchant": d.get("merchant"),
         "date": d.get("date"),
-        "total": total,   # grand total for reference
+        "total": total,
         "tax": tax,
         "tip": tip,
         "items": items_out,
@@ -251,11 +208,9 @@ def _azure_analyze_receipt(image_bytes: bytes) -> dict | None:
         try:
             pr = requests.get(op_url, headers={"Ocp-Apim-Subscription-Key": AZURE_KEY}, timeout=30)
         except requests.RequestException:
-            time.sleep(1.0)
-            continue
+            time.sleep(1.0); continue
         if pr.status_code != 200:
-            time.sleep(1.0)
-            continue
+            time.sleep(1.0); continue
         data = pr.json()
         status = data.get("status")
         if status in ("succeeded", "failed", "partiallySucceeded"):
@@ -360,19 +315,13 @@ def _openai_from_image(image_b64: str) -> dict:
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Extract line items from this receipt photo and return a SINGLE JSON object "
-                            "with fields: { merchant?: string, date?: string, total?: number, tax?: number, "
-                            "tip?: number, items: [{ description: string, amount: number }] }. "
-                            "Do not include any text outside the JSON."
-                        ),
+                    {"type": "text", "text":
+                        "Extract line items from this receipt photo and return a SINGLE JSON object "
+                        "with fields: { merchant?: string, date?: string, total?: number, tax?: number, "
+                        "tip?: number, items: [{ description: string, amount: number }] }. "
+                        "Do not include any text outside the JSON."
                     },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
-                    },
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}" }},
                 ],
             }
         ],
@@ -408,7 +357,8 @@ def _openai_from_text(text: str) -> dict | None:
                     "items: [{ description: string, amount: number }] }. Only return JSON."
                 },
                 {"type": "text", "text": text}
-            ]}]
+            ]}
+        ]
     }
     try:
         r = requests.post(
@@ -436,7 +386,7 @@ async def analyze(
     request: Request,
     file: UploadFile | None = File(default=None),
     json_body: AnalyzeReq | None = Body(default=None),
-    include_tax_tip: Optional[bool] = None,  # override env via query param (?include_tax_tip=true|false)
+    include_tax_tip: Optional[bool] = None,  # override env via query param
 ):
     try:
         # 1) Choose restaurant mode for this request
