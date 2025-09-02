@@ -50,6 +50,7 @@
       ["sentry-expo", { "enableInExpoDevelopment": false }]
     ],
     "extra": {
+      "EXPO_PUBLIC_API_BASE": "https://splitchamp-ai.onrender.com",
       "supportEmail": "williamckim11@gmail.com",
       "privacyUrl": "https://willckim.github.io/splitchamp-ai/privacy.html",
       "termsUrl": "https://willckim.github.io/splitchamp-ai/terms.html",
