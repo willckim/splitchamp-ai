@@ -12,24 +12,10 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true,
-      "android": {
-        "buildType": "app-bundle" // <-- ensures .aab for Play Store
-      },
-      "ios": {
-        "simulator": false
-      }
+      "autoIncrement": true
     }
   },
   "submit": {
-    "production": {
-      "android": {
-        "serviceAccountKeyPath": "./google-play-service-account.json", // Play API key
-        "track": "production" // or "internal" if you want closed testing first
-      },
-      "ios": {
-        "appleId": "your-apple-id@email.com"
-      }
-    }
+    "production": {}
   }
 }
