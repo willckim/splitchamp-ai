@@ -1,21 +1,35 @@
 {
   "cli": {
-    "version": ">= 16.18.0",
+    "version": ">= 14.0.0",
     "appVersionSource": "remote"
   },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://splitchamp-ai.onrender.com"
+      }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": { "buildType": "apk" },
+      "ios": { "simulator": true },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://splitchamp-ai.onrender.com"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "distribution": "store",
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://splitchamp-ai.onrender.com"
+      }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": { "track": "internal" }
+    }
   }
 }
