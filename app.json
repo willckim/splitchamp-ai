@@ -18,11 +18,7 @@
     "ios": {
       "bundleIdentifier": "com.willckim.splitchamp",
       "buildNumber": "1",
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSCameraUsageDescription": "We use the camera to capture receipts for AI parsing.",
-        "NSPhotoLibraryUsageDescription": "We use your photo library to import receipt photos."
-      }
+      "supportsTablet": true
     },
     "android": {
       "package": "com.willckim.splitchamp",
@@ -32,20 +28,13 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "permissions": [
-        "INTERNET",
-        "CAMERA",
-        "READ_MEDIA_IMAGES",
-        "READ_EXTERNAL_STORAGE"
-      ],
+      "permissions": [],
       "usesCleartextTraffic": false,
       "intentFilters": [
         {
           "action": "VIEW",
           "autoVerify": false,
-          "data": [
-            { "scheme": "splitchamp" }
-          ],
+          "data": [{ "scheme": "splitchamp" }],
           "category": ["BROWSABLE", "DEFAULT"]
         }
       ],
@@ -57,23 +46,23 @@
     },
     "plugins": [
       "expo-router",
-      ["sentry-expo", { "enableInExpoDevelopment": false }],
-      ["expo-build-properties", {
-        "android": { "minSdkVersion": 24, "targetSdkVersion": 34, "compileSdkVersion": 34 },
-        "ios": { "deploymentTarget": "13.0" }
-      }]
+      [
+        "expo-build-properties",
+        {
+          "android": { "minSdkVersion": 24, "targetSdkVersion": 35, "compileSdkVersion": 35 },
+          "ios": { "deploymentTarget": "13.0" }
+        }
+      ]
     ],
     "runtimeVersion": { "policy": "sdkVersion" },
     "updates": { "fallbackToCacheTimeout": 0 },
     "extra": {
-      "EXPO_PUBLIC_API_BASE": "https://splitchamp-ai.onrender.com",
+      "EXPO_PUBLIC_API_BASE": "",
       "supportEmail": "williamckim11@gmail.com",
       "privacyUrl": "https://willckim.github.io/splitchamp-ai/privacy.html",
       "termsUrl": "https://willckim.github.io/splitchamp-ai/terms.html",
       "waitlistUrl": "https://forms.gle/B1oJoa56EnAavgBD6",
-      "eas": {
-        "projectId": "a2d2f44e-30e7-4821-b662-ac4da56c424d"
-      }
+      "eas": { "projectId": "a2d2f44e-30e7-4821-b662-ac4da56c424d" }
     }
   }
 }
