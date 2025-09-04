@@ -1,5 +1,5 @@
 # server.py
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Body
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Body, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -136,7 +136,7 @@ def _coerce_amounts(parsed: dict) -> dict:
             it["amount"] = 0.0
     return parsed
 
-def _postprocess_receipt(d: dict, include_tax_tip: bool) -> dict:
+def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: Optional[float] = None) -> dict:
     raw_items = d.get("items") or []
     cleaned: list[dict] = []
     skip_tokens = {"SUBTOTAL", "CHANGE", "CASH", "CARD", "BALANCE", "AUTH", "TOTAL"}
@@ -152,16 +152,24 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool) -> dict:
         except Exception:
             continue
 
+    # Merge duplicates by description
     merged: dict[str, float] = {}
     for it in cleaned:
         k = it["description"].strip().lower()
         merged[k] = round(merged.get(k, 0) + it["amount"], 2)
     items_out = [{"description": k.title(), "amount": v} for k, v in merged.items()]
 
+    # Numbers
     tax = round(float(d.get("tax") or 0), 2)
     tip = round(float(d.get("tip") or 0), 2)
     sum_items = round(sum(x["amount"] for x in items_out), 2)
 
+    # If model didn’t extract a tip but user provided a tip %, derive one
+    if tip == 0 and tip_percent_override is not None:
+        base_for_tip = sum_items + (tax if include_tax_tip else 0.0)
+        tip = round((base_for_tip * float(tip_percent_override)) / 100.0, 2)
+
+    # Total reconciliation
     total = d.get("total")
     if total is None or not isinstance(total, (int, float)):
         total = round(sum_items + tax + tip, 2)
@@ -171,6 +179,7 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool) -> dict:
         if abs(total - computed) <= 0.02:
             total = computed
 
+    # Optionally include tax/tip as line items
     if include_tax_tip:
         if tax > 0: items_out.append({"description": "Tax", "amount": tax})
         if tip > 0: items_out.append({"description": "Tip", "amount": tip})
@@ -343,7 +352,7 @@ def _openai_from_image(image_b64: str) -> dict:
                     "tip?: number, items: [{ description: string, amount: number }] }. "
                     "Do not include any text outside the JSON."
                 },
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}},
             ],
         }],
     }
@@ -406,14 +415,35 @@ def _openai_from_text(text: str) -> Optional[dict]:
 @app.post("/analyze-receipt", response_model=AnalyzeResp)
 async def analyze(
     request: Request,
+    # image inputs
     file: UploadFile | None = File(default=None),
     json_body: AnalyzeReq | None = Body(default=None),
-    include_tax_tip: Optional[bool] = None,
+
+    # knobs via multipart form (preferred on mobile)
+    include_tax_tip_form: Optional[bool] = Form(default=None, alias="include_tax_tip"),
+    people_form: Optional[int] = Form(default=None, alias="people"),
+    tip_percent_form: Optional[float] = Form(default=None, alias="tip_percent"),
+
+    # knobs via query (fallback)
+    include_tax_tip_q: Optional[bool] = Query(default=None, alias="include_tax_tip"),
+    people_q: Optional[int] = Query(default=None, alias="people"),
+    tip_percent_q: Optional[float] = Query(default=None, alias="tip_percent"),
 ):
     try:
-        include_tax_tip_flag = RESTAURANT_INCLUDE_TAX_TIP_ITEMS if include_tax_tip is None else bool(include_tax_tip)
+        # ---- normalize knobs (form wins over query; env default if still None) ----
+        include_tax_tip_in = include_tax_tip_form if include_tax_tip_form is not None else include_tax_tip_q
+        include_tax_tip_flag = RESTAURANT_INCLUDE_TAX_TIP_ITEMS if include_tax_tip_in is None else bool(include_tax_tip_in)
 
-        # input
+        people = people_form if people_form is not None else people_q
+        tip_percent = tip_percent_form if tip_percent_form is not None else tip_percent_q
+
+        # Basic validation (soft bounds)
+        if people is not None and (people < 1 or people > 50):
+            raise HTTPException(status_code=400, detail="people must be between 1 and 50")
+        if tip_percent is not None and (tip_percent < 0 or tip_percent > 100):
+            raise HTTPException(status_code=400, detail="tip_percent must be between 0 and 100")
+
+        # ---- read image ----
         if file is not None:
             raw = await file.read()
             image_b64 = _to_b64_jpeg(raw)
@@ -429,10 +459,11 @@ async def analyze(
         else:
             raise HTTPException(status_code=400, detail="Provide a 'file' (multipart) or 'image_base64' (JSON).")
 
+        # ---- pipeline ----
         # 1) Document Intelligence prebuilt receipts
         parsed = _azure_analyze_receipt(raw)
         if parsed and parsed.get("items"):
-            out = _postprocess_receipt(parsed, include_tax_tip_flag)
+            out = _postprocess_receipt(parsed, include_tax_tip_flag, tip_percent_override=tip_percent)
             out["engine"] = "azure_receipt"
             return AnalyzeResp(**_coerce_amounts(out))
 
@@ -441,13 +472,13 @@ async def analyze(
         if text:
             parsed_text = _openai_from_text(text)
             if parsed_text and parsed_text.get("items"):
-                out = _postprocess_receipt(parsed_text, include_tax_tip_flag)
+                out = _postprocess_receipt(parsed_text, include_tax_tip_flag, tip_percent_override=tip_percent)
                 out["engine"] = "azure_read_gpt"
                 return AnalyzeResp(**_coerce_amounts(out))
 
         # 3) Final fallback: GPT with image
         parsed_img = _openai_from_image(image_b64)
-        out = _postprocess_receipt(parsed_img, include_tax_tip_flag)
+        out = _postprocess_receipt(parsed_img, include_tax_tip_flag, tip_percent_override=tip_percent)
         out["engine"] = "gpt_image"
         return AnalyzeResp(**_coerce_amounts(out))
 

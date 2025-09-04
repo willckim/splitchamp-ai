@@ -5,7 +5,7 @@ export default {
     name: "SplitChamp AI",
     owner: "willckim",
     slug: "splitchamp-ai",
-    version: "1.0.0",
+    version: "2.0.0",
     orientation: "portrait",
     icon: "./assets/icon.png",
     userInterfaceStyle: "light",
@@ -19,18 +19,21 @@ export default {
     assetBundlePatterns: ["**/*"],
     ios: {
       bundleIdentifier: "com.willckim.splitchamp",
-      buildNumber: "1",
-      supportsTablet: true
+      buildNumber: "2",
+      supportsTablet: true,
+      infoPlist: {
+        NSCameraUsageDescription: "SplitChamp uses the camera to capture receipt photos for AI parsing."
+      }
     },
     android: {
       package: "com.willckim.splitchamp",
-      versionCode: 1,
+      versionCode: 2,
       edgeToEdgeEnabled: true,
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon.png",
         backgroundColor: "#ffffff"
       },
-      permissions: [],
+      permissions: ["CAMERA"],
       usesCleartextTraffic: false,
       intentFilters: [
         {
