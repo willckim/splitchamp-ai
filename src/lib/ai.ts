@@ -13,27 +13,20 @@ export type ReceiptParse = {
 };
 
 export type AnalyzeOptions = {
-  /** If provided, overrides server env for this request only */
   includeTaxTip?: boolean;
-  /** Number of people to split among (e.g., 2) */
   people?: number;
-  /** Tip percentage (e.g., 20 = 20%) */
   tipPercent?: number;
 };
 
 function readApiBase(): string | null {
-  // 1) Public env (preferred)
   const fromEnv = (process.env as any)?.EXPO_PUBLIC_API_BASE?.toString().trim();
-
-  // 2) app.json/app.config extra (support both keys)
   const extra = (Constants?.expoConfig?.extra ?? {}) as Record<string, any>;
   const fromExtraPublic =
     typeof extra.EXPO_PUBLIC_API_BASE === 'string' ? extra.EXPO_PUBLIC_API_BASE.trim() : '';
   const fromExtraLegacy =
     typeof extra.apiBase === 'string' ? extra.apiBase.trim() : '';
-
   const raw = fromEnv || fromExtraPublic || fromExtraLegacy || '';
-  return raw ? raw.replace(/\/+$/, '') : null; // strip trailing slash(es)
+  return raw ? raw.replace(/\/+$/, '') : null;
 }
 
 export const apiBase: string | null = readApiBase();
@@ -54,8 +47,8 @@ function coerceReceipt(data: any): ReceiptParse {
   return parsed as ReceiptParse;
 }
 
-/** Clamp + sanitize options so we never send NaN/bad values */
-function normalizeOpts(opts?: AnalyzeOptions): Required<Pick<AnalyzeOptions, 'includeTaxTip'>> & Partial<AnalyzeOptions> {
+/** Clamp numbers, preserve includeTaxTip undefined when not provided */
+function normalizeOpts(opts?: AnalyzeOptions): Partial<AnalyzeOptions> {
   const out: AnalyzeOptions = { ...opts };
   if (typeof out.people === 'number') {
     out.people = Math.max(1, Math.floor(out.people));
@@ -63,7 +56,7 @@ function normalizeOpts(opts?: AnalyzeOptions): Required<Pick<AnalyzeOptions, 'in
   if (typeof out.tipPercent === 'number') {
     out.tipPercent = Math.min(100, Math.max(0, Math.floor(out.tipPercent)));
   }
-  return { includeTaxTip: !!out.includeTaxTip, ...out };
+  return out;
 }
 
 /** RN-safe query builder; appends only provided fields */
@@ -127,7 +120,6 @@ export async function analyzeReceiptFromUri(
     type: 'image/jpeg',
   } as any);
 
-  // Also pass knobs as form fields (in addition to query) to maximize backend compatibility
   if (typeof norm.includeTaxTip === 'boolean') {
     form.append('include_tax_tip', String(norm.includeTaxTip));
   }
@@ -140,11 +132,11 @@ export async function analyzeReceiptFromUri(
 
   const url = withQuery(`${apiBase}/analyze-receipt`, norm);
 
-  const t = withTimeout(90_000); // 90s to match server/OpenAI timeouts
+  const t = withTimeout(90_000);
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { Accept: 'application/json' }, // let RN set multipart boundary
+      headers: { Accept: 'application/json' },
       body: form,
       signal: t.signal,
     });

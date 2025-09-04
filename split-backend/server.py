@@ -1,4 +1,3 @@
-# server.py
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Body, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -346,13 +345,19 @@ def _openai_from_image(image_b64: str) -> dict:
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "text", "text":
-                    "Extract line items from this receipt photo and return a SINGLE JSON object "
-                    "with fields: { merchant?: string, date?: string, total?: number, tax?: number, "
-                    "tip?: number, items: [{ description: string, amount: number }] }. "
-                    "Do not include any text outside the JSON."
+                {
+                    "type": "text",
+                    "text": (
+                        "Extract line items from this receipt photo and return a SINGLE JSON object "
+                        "with fields: { merchant?: string, date?: string, total?: number, tax?: number, "
+                        "tip?: number, items: [{ description: string, amount: number }] }. "
+                        "Do not include any text outside the JSON."
+                    )
                 },
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
+                },
             ],
         }],
     }
