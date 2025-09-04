@@ -8,9 +8,22 @@ import type { Expense, Participant, Transfer, ExpenseItem } from '../types';
 const uid = () =>
   (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
 
-// --- NEW small helpers ---
+// --- small helpers ---
 const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
 const safeNum = (n: any) => (Number.isFinite(Number(n)) ? Number(n) : 0);
+
+// crude alcohol detector as a fallback when backend category is missing
+const ALC_TOKENS = [
+  'beer','wine','lager','ipa','ale','stout','sauvignon','cabernet','merlot','riesling','pinot',
+  'vodka','tequila','whiskey','whisky','bourbon','rum','sake','soju','cocktail','margarita','mojito',
+  'martini','negroni','cider','rosé','rose','prosecco','champagne'
+];
+const isAlcohol = (it: Pick<ExpenseItem,'description'> & Partial<ExpenseItem>) => {
+  const cat = (it as any).category as string | undefined;
+  if (cat && cat.toLowerCase() === 'alcohol') return true;
+  const s = (it.description || '').toLowerCase();
+  return ALC_TOKENS.some(k => s.includes(k));
+};
 
 export interface SplitState {
   participants: Participant[];
@@ -34,17 +47,20 @@ export interface SplitState {
     opts?: { overwrite?: boolean; assignToAllIfEmpty?: boolean }
   ) => void;
 
-  // --- NEW: Option 2 helpers ---
-  /** If items contain names (e.g., "William Burger"), try to auto-assign to participants by name match */
+  // NEW for the wizard
+  /** Assign the selected itemized receipt items to a single person (equal share if multiple later). */
+  assignItemsTo: (expenseItemIds: string[], personId: string) => void;
+
+  /** Exclude these people from paying for alcohol lines (keeps others as payers). */
+  excludeAlcoholFor: (personIds: string[]) => void;
+
+  /** Re-run totals/settlement computation (exposed for batch edits). */
+  recompute: () => void;
+
+  // Optional helpers that you already had
   autoAssignItemsByName: () => void;
-
-  /** Apply an even split across all current participants (overwrites splitAmong for each item/expense) */
   applyEqualSplit: () => void;
-
-  /** Apply a weighted split. weights is an array same length as participants, e.g., [2,1,1] */
   applyWeightedSplit: (weights: number[]) => void;
-
-  /** Compute a discrepancy if the single itemized expense total != sum(items)+tax+tip (in dollars) */
   getItemizationDiscrepancy: () => number;
 
   _hasHydrated: boolean;
@@ -81,6 +97,9 @@ export const useSplitStore = create<SplitState>()(
         participants: [],
         expenses: [],
         transfers: [],
+
+        // expose recompute so UI can call it
+        recompute,
 
         addParticipant: (name) => {
           set((s) => ({ participants: [...s.participants, { id: uid(), name }] }));
@@ -159,7 +178,53 @@ export const useSplitStore = create<SplitState>()(
           recompute();
         },
 
-        // -------- NEW: AI-assisted splitting logic ----------
+        // --- NEW: Assign specific receipt items to a person
+        assignItemsTo: (expenseItemIds, personId) => {
+          if (!expenseItemIds?.length || !personId) return;
+          const next = get().expenses.map((e) => {
+            if (e.splitMethod !== 'itemized' || !Array.isArray(e.items)) return e;
+            const items = e.items.map((it) =>
+              expenseItemIds.includes(it.id)
+                ? { ...it, splitAmong: [personId] }
+                : it
+            );
+            return { ...e, items };
+          });
+          set({ expenses: next });
+          recompute();
+        },
+
+        // --- NEW: Exclude certain people from paying for alcohol
+        excludeAlcoholFor: (personIds) => {
+          if (!personIds?.length) return;
+          const everyone = get().participants.map((p) => p.id);
+
+          const next = get().expenses.map((e) => {
+            if (e.splitMethod !== 'itemized' || !Array.isArray(e.items)) return e;
+
+            // baseline payers for items that don't have specific splitAmong yet
+            const basePayers = e.splitAmong?.length ? e.splitAmong : everyone;
+
+            const items = e.items.map((it) => {
+              // only touch alcohol lines
+              if (!isAlcohol(it)) return it;
+
+              const current = (it.splitAmong && it.splitAmong.length ? it.splitAmong : basePayers);
+              const filtered = current.filter((pid) => !personIds.includes(pid));
+
+              // if everyone was excluded accidentally, keep original to avoid orphaning the charge
+              const nextSplit = filtered.length ? filtered : current;
+              return { ...it, splitAmong: nextSplit };
+            });
+
+            return { ...e, items };
+          });
+
+          set({ expenses: next });
+          recompute();
+        },
+
+        // -------- Existing helpers ----------
         autoAssignItemsByName: () => {
           const { participants, expenses } = get();
           if (!participants.length || !expenses.length) return;
@@ -175,13 +240,11 @@ export const useSplitStore = create<SplitState>()(
               const matches = nameMap.filter(n =>
                 desc.includes(n.name) || desc.split(/\s+/).some(tok => tok === n.name)
               );
-              // If exactly one match, assign to that person only; else leave as-is
               if (matches.length === 1) {
                 return { ...it, splitAmong: [matches[0].id] };
               }
               return it;
             });
-            // If some items now have specific owners, default remaining items to everyone
             const updatedItems = items.map(it =>
               (it.splitAmong && it.splitAmong.length > 0) ? it : { ...it, splitAmong: e.splitAmong }
             );
@@ -214,15 +277,14 @@ export const useSplitStore = create<SplitState>()(
           const everyone = participants.map(p => p.id);
           if (!everyone.length || weights.length !== everyone.length) return;
 
-          // Weights don’t change per-item math here; we store them on each expense as a per-participant multiplier
-          // Minimal approach: we expand weights into repeated ids on splitAmong (keeps the rest of the pipeline intact).
+          // Minimal weight handling: repeat ids by weight to simulate proportional shares
           const expandByWeight = (ids: string[], w: number[]) => {
             const out: string[] = [];
             ids.forEach((id, i) => {
               const times = Math.max(0, Math.round(safeNum(w[i])));
               for (let t = 0; t < times; t++) out.push(id);
             });
-            return out.length ? out : ids; // fallback to equal if weights all zero
+            return out.length ? out : ids;
           };
 
           const mapped = expenses.map((e) => {
@@ -239,7 +301,6 @@ export const useSplitStore = create<SplitState>()(
 
         getItemizationDiscrepancy: () => {
           const { expenses } = get();
-          // Focus: single itemized import (your main scan flow)
           const e = expenses.length === 1 ? expenses[0] : undefined;
           if (!e || e.splitMethod !== 'itemized' || !Array.isArray(e.items)) return 0;
           const itemsTotal = sum(e.items.map(it => safeNum(it.amount)));
@@ -247,7 +308,6 @@ export const useSplitStore = create<SplitState>()(
           const tip = safeNum((e as any).tip);
           const expected = itemsTotal + tax + tip;
           const diff = safeNum(e.amount) - expected;
-          // Round small floating errors
           return Math.abs(diff) < 0.01 ? 0 : Number(diff.toFixed(2));
         },
 

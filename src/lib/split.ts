@@ -1,4 +1,5 @@
-import { Expense, Participant, Transfer } from '../types';
+// src/lib/split.ts
+import { Expense, Participant, Transfer, ExpenseItem, ItemCategory } from '../types';
 
 export function computeSettlements(participants: Participant[], expenses: Expense[]): Transfer[] {
   if (!participants.length || !expenses.length) return [];
@@ -50,7 +51,7 @@ function sharesForExpense(e: Expense, everyoneIds: string[]) {
     let itemsTotal = 0;
     for (const it of e.items) {
       const group = it.splitAmong?.length ? it.splitAmong : everyoneIds;
-      const share = it.amount / group.length;
+      const share = it.amount / Math.max(1, group.length);
       itemsTotal += it.amount;
       for (const id of group) per.set(id, (per.get(id) || 0) + share);
     }
@@ -60,10 +61,66 @@ function sharesForExpense(e: Expense, everyoneIds: string[]) {
     }
   } else {
     const group = e.splitAmong?.length ? e.splitAmong : everyoneIds;
-    const share = e.amount / group.length;
+    const share = e.amount / Math.max(1, group.length);
     for (const id of group) per.set(id, (per.get(id) || 0) + share);
   }
   return per;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/* ----------------------------------------------------------------
+ * OPTIONAL FALLBACK CATEGORIZATION
+ * Use ONLY when backend doesn't provide `category`.
+ * ---------------------------------------------------------------- */
+
+/** Quick keyword buckets. Keep conservative to avoid mislabeling. */
+const ALC = [
+  'beer','ipa','lager','ale','stout','cider',
+  'wine','rosé','rose','cabernet','merlot','pinot','sauvignon','riesling','prosecco','champagne',
+  'vodka','tequila','whiskey','whisky','bourbon','rum','sake','soju',
+  'cocktail','margarita','mojito','martini','negroni','old fashioned','spritz'
+];
+
+const APP = [
+  'appetizer','app', 'nacho','nachos','wings','calamari','fries','chips','dip','edamame','spring roll','dumpling','garlic bread','hummus'
+];
+
+const TAX = ['tax','hst','gst','pst','vat','sales tax'];
+const TIP = ['tip','gratuity','service charge','svc'];
+
+const IGNORE = ['change','cash','card','auth','balance','subtotal']; // not usually lines to charge
+
+/** Very small normalizer: lowercases and trims descriptors. */
+const norm = (s: string) => (s || '').toLowerCase().trim();
+
+/** Returns a best-guess ItemCategory based on description text. */
+export function categorizeItem(description: string): ItemCategory {
+  const d = norm(description);
+  if (!d) return 'food';
+
+  const isAny = (arr: string[]) => arr.some(k => d.includes(k));
+
+  if (isAny(TAX)) return 'tax';
+  if (isAny(TIP)) return 'tip';
+  if (isAny(IGNORE)) return 'ignore';
+  if (isAny(ALC)) return 'alcohol';
+  if (isAny(APP)) return 'appetizer';
+
+  // Everything else (including soda/juice/coffee) defaults to food
+  return 'food';
+}
+
+/**
+ * Walks expenses and adds `category` to items that don't have one yet.
+ * Non-destructive: existing categories are kept.
+ */
+export function categorizeExpensesIfMissing(expenses: Expense[]): Expense[] {
+  return expenses.map(e => {
+    if (e.splitMethod !== 'itemized' || !Array.isArray(e.items)) return e;
+    const items: ExpenseItem[] = e.items.map(it =>
+      it.category ? it : { ...it, category: categorizeItem(it.description) }
+    );
+    return { ...e, items };
+  });
+}

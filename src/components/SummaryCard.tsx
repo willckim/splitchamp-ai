@@ -9,9 +9,13 @@ const fmt = (n: number) => (Number.isFinite(n) ? `$${n.toFixed(2)}` : '$0.00');
 
 function SummaryCardImpl() {
   const { theme } = useTheme();
-  const transfers = useSplitStore(s => s.transfers);
+
+  // ✅ one selector per value (stable, prevents infinite loop)
   const participants = useSplitStore(s => s.participants);
-  const expenses = useSplitStore(s => s.expenses);
+  const expenses     = useSplitStore(s => s.expenses);
+  const transfers    = useSplitStore(s => s.transfers);
+  const totals       = useSplitStore(s => (s as any).totals);
+  const settlement   = useSplitStore(s => (s as any).settlement);
 
   const nameOf = useMemo(() => {
     const m = new Map<string, string>();
@@ -19,44 +23,62 @@ function SummaryCardImpl() {
     return (id: string) => m.get(id) ?? 'Unknown';
   }, [participants]);
 
-  const receiptTotal = useMemo(
-    () => expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0),
+  const fallbackReceiptTotal = useMemo(
+    () => expenses.reduce((sum, e: any) => sum + (Number(e.amount) || 0), 0),
     [expenses]
   );
 
-  // Empty state
+  const fallbackToSettle = useMemo(
+    () => transfers.reduce((s, t: any) => s + (Number(t.amount) || 0), 0),
+    [transfers]
+  );
+
+  const receiptTotal = Number(totals?.receipt ?? fallbackReceiptTotal);
+  const totalToSettle = Number(totals?.toSettle ?? fallbackToSettle);
+
   if (!transfers.length) {
     return (
       <View style={{ marginTop: 12 }}>
-        <View style={[styles.subtleCard, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+        <View
+          style={[
+            styles.subtleCard,
+            { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 },
+          ]}
+        >
           <Text style={{ fontWeight: '800', marginBottom: 4, color: theme.text }}>
             Nothing to settle
           </Text>
           <Text style={{ color: theme.text, opacity: 0.75 }}>
-            Add a few expenses to see who owes what.
+            Add or edit items to see who owes what.
           </Text>
         </View>
       </View>
     );
   }
 
-  const totalToSettle = transfers.reduce((s, t) => s + t.amount, 0);
-
   return (
-    <View style={[styles.card, { marginTop: 12, backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+    <View
+      style={[
+        styles.card,
+        { marginTop: 12, backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 },
+      ]}
+    >
       <Text style={{ fontWeight: '800', fontSize: 18, marginBottom: 8, color: theme.text }}>
         Who owes who what
       </Text>
 
-      <View style={{ gap: 6 }}>
-        {transfers.map((t, idx) => (
-          <Text key={idx} style={{ color: theme.text }}>
-            {nameOf(t.from)} <Text>→</Text> {nameOf(t.to)}: {fmt(t.amount)}
-          </Text>
-        ))}
-      </View>
+      {settlement?.summary ? (
+        <Text style={{ color: theme.text, marginBottom: 6 }}>{settlement.summary}</Text>
+      ) : (
+        <View style={{ gap: 6 }}>
+          {transfers.map((t: any, idx: number) => (
+            <Text key={idx} style={{ color: theme.text }}>
+              {nameOf(t.from)} <Text>→</Text> {nameOf(t.to)}: {fmt(Number(t.amount))}
+            </Text>
+          ))}
+        </View>
+      )}
 
-      {/* Divider */}
       <View
         style={{
           height: 1,
@@ -66,15 +88,14 @@ function SummaryCardImpl() {
         }}
       />
 
-      {/* Receipt total for quick math check */}
       {expenses.length > 0 && (
-        <Text style={{ color: theme.text, opacity: 0.75, marginBottom: 4 }}>
+        <Text style={{ color: theme.text, opacity: 0.8, marginBottom: 4 }}>
           Receipt total:{' '}
           <Text style={{ fontWeight: '800', color: theme.text }}>{fmt(receiptTotal)}</Text>
         </Text>
       )}
 
-      <Text style={{ color: theme.text, opacity: 0.75 }}>
+      <Text style={{ color: theme.text, opacity: 0.85 }}>
         Total to settle:{' '}
         <Text style={{ fontWeight: '800', color: theme.text }}>{fmt(totalToSettle)}</Text>
       </Text>

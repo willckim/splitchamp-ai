@@ -1,6 +1,6 @@
 // app/capture.tsx
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, Button, Image, ActivityIndicator, Alert, Switch, TouchableOpacity, Modal, TextInput, ScrollView } from 'react-native';
+import { View, Text, Button, Image, ActivityIndicator, Alert, Switch, TouchableOpacity, Modal, TextInput, ScrollView, Pressable } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -11,6 +11,50 @@ import { Link, router } from 'expo-router';
 import { analyzeReceiptFromUri, hasApi } from '@/lib/ai';
 import { useSplitStore } from '@/store/useSplitStore';
 import { useTheme } from '../src/providers/theme';
+
+function PostAnalyzeSheet({
+  visible,
+  onClose,
+  onSplitEven,
+  onSplitByPerson,
+  theme,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSplitEven: () => void;
+  onSplitByPerson: () => void;
+  theme: any;
+}) {
+  return (
+    <Modal transparent visible={visible} animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.45)', justifyContent:'flex-end' }}>
+        <View style={{ backgroundColor: theme.card, padding:20, borderTopLeftRadius:20, borderTopRightRadius:20, borderTopWidth:1, borderColor: theme.border }}>
+          <Text style={{ color: theme.text, fontSize:18, fontWeight:'800', marginBottom:8 }}>
+            How do you want to split?
+          </Text>
+
+          <Pressable
+            onPress={onSplitEven}
+            style={{ padding:14, borderRadius:14, backgroundColor: theme.accent, alignItems:'center', marginBottom:10 }}
+          >
+            <Text style={{ color:'#fff', fontWeight:'800' }}>Split Even</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onSplitByPerson}
+            style={{ padding:14, borderRadius:14, borderWidth:1, borderColor: theme.border, backgroundColor: theme.bg, alignItems:'center' }}
+          >
+            <Text style={{ color: theme.text, fontWeight:'700' }}>Split by Person</Text>
+          </Pressable>
+
+          <Pressable onPress={onClose} style={{ marginTop:10, alignItems:'center', padding:10 }}>
+            <Text style={{ color:'rgba(255,255,255,0.7)', fontWeight:'700' }}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
 
 export default function CaptureReceipt() {
   const { theme } = useTheme();
@@ -28,6 +72,9 @@ export default function CaptureReceipt() {
   const [showHelp, setShowHelp] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
+  // NEW: post-analyze split choice
+  const [showSplitChoice, setShowSplitChoice] = useState(false);
+
   // NEW: name editor modal
   const [showNameModal, setShowNameModal] = useState(false);
   const [namesDraft, setNamesDraft] = useState<string[]>([]);
@@ -42,6 +89,8 @@ export default function CaptureReceipt() {
   // Store actions (replace expenses instead of appending)
   const setExpenses = useSplitStore(s => s.setExpenses);
   const upsertParticipantNames = useSplitStore(s => s.upsertParticipantNames);
+  const applyEqualSplit = useSplitStore(s => s.applyEqualSplit);
+  const createParticipantsByCount = useSplitStore.getState().createParticipantsByCount;
 
   useEffect(() => {
     if (permission && !permission.granted && permission.canAskAgain) {
@@ -102,7 +151,7 @@ export default function CaptureReceipt() {
     setPeopleCount(String(ppl));
     setTipPercent(String(tip));
 
-    const { participants, createParticipantsByCount } = useSplitStore.getState();
+    const { participants } = useSplitStore.getState();
     if (participants.length !== ppl) {
       createParticipantsByCount?.(ppl); // regenerate to match desired count
     }
@@ -205,10 +254,11 @@ export default function CaptureReceipt() {
         const hasTipItem = result.items.some((it: any) => String(it.description || '').toLowerCase() === 'tip');
 
         const items = result.items.map((it: any, idx: number) => ({
-          id: `it_${Date.now()}_${idx}`,
+          id: it.id || `it_${Date.now()}_${idx}`,
           description: it.description ?? `Item ${idx + 1}`,
           amount: Number(it.amount ?? 0),
           splitAmong: everyone,
+          // optional: category: it.category
         }));
 
         const itemsTotal = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
@@ -235,20 +285,22 @@ export default function CaptureReceipt() {
           { overwrite: true, assignToAllIfEmpty: true }
         );
       } else {
-        // Separate expenses, also replace
+        // Separate expenses (replace)
         const list = result.items.map((it: any, idx: number) => ({
+          id: it.id || `e_${Date.now()}_${idx}`,
           description: it.description ?? `Item ${idx + 1}`,
           amount: Number(it.amount ?? 0),
           paidBy: it.paidById ?? defaultPayer,
           splitAmong: it.splitAmongIds?.length ? it.splitAmongIds : everyone,
+          // optional: category: it.category
         }));
 
         setExpenses(list, { overwrite: true, assignToAllIfEmpty: true });
       }
 
-      // Clean navigation — replace instead of push
+      // ✅ NEW: open split choice sheet instead of navigating immediately
+      setShowSplitChoice(true);
       setPhotoUri(null); // optional reset so UI is ready for next scan
-      router.replace('/summary');
     } catch (err: any) {
       const msg = `${err?.message || err}`;
       const looksNetwork = msg.includes('Network') || msg.includes('timeout') || msg.includes('fetch');
@@ -260,6 +312,18 @@ export default function CaptureReceipt() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSplitEven = () => {
+    // Apply even split and go to summary
+    applyEqualSplit?.();
+    setShowSplitChoice(false);
+    router.replace('/summary');
+  };
+
+  const handleSplitByPerson = () => {
+    setShowSplitChoice(false);
+    router.push('/split/by-person');
   };
 
   return (
@@ -449,6 +513,15 @@ export default function CaptureReceipt() {
           </View>
         </View>
       </Modal>
+
+      {/* ✅ Post-analyze split choice */}
+      <PostAnalyzeSheet
+        visible={showSplitChoice}
+        onClose={() => setShowSplitChoice(false)}
+        onSplitEven={handleSplitEven}
+        onSplitByPerson={handleSplitByPerson}
+        theme={theme}
+      />
     </View>
   );
 }

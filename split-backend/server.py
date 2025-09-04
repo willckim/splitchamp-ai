@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from typing import Optional
-import os, requests, json, time, base64
+import os, requests, json, time, base64, hashlib
 
 # --- Config / env ---
 load_dotenv()
@@ -34,22 +34,22 @@ AZURE_USE_RECEIPT = _to_bool(os.environ.get("AZURE_USE_RECEIPT"), True)
 AZURE_USE_READ    = _to_bool(os.environ.get("AZURE_USE_READ"), True)
 RESTAURANT_INCLUDE_TAX_TIP_ITEMS = _to_bool(os.environ.get("RESTAURANT_INCLUDE_TAX_TIP_ITEMS"), True)
 
-# --- New: separate resources ---
-AZURE_DI_ENDPOINT   = (os.environ.get("AZURE_DI_ENDPOINT") or "").rstrip("/")
-AZURE_DI_KEY        = os.environ.get("AZURE_DI_KEY") or ""
-AZURE_VISION_ENDPOINT = (os.environ.get("AZURE_VISION_ENDPOINT") or "").rstrip("/")
-AZURE_VISION_KEY      = os.environ.get("AZURE_VISION_KEY") or ""
+# --- Azure resources ---
+AZURE_DI_ENDPOINT       = (os.environ.get("AZURE_DI_ENDPOINT") or "").rstrip("/")
+AZURE_DI_KEY            = os.environ.get("AZURE_DI_KEY") or ""
+AZURE_VISION_ENDPOINT   = (os.environ.get("AZURE_VISION_ENDPOINT") or "").rstrip("/")
+AZURE_VISION_KEY        = os.environ.get("AZURE_VISION_KEY") or ""
 
 DI_CONFIGURED     = bool(AZURE_DI_ENDPOINT and AZURE_DI_KEY)
 VISION_CONFIGURED = bool(AZURE_VISION_ENDPOINT and AZURE_VISION_KEY)
 AZURE_CONFIGURED  = DI_CONFIGURED or VISION_CONFIGURED
 
-AZURE_API_VERSION_DOCS_NEW  = "2024-07-31"  # Document Intelligence new route
-AZURE_API_VERSION_DOCS_OLD  = "2023-07-31"  # Legacy formrecognizer fallback
+AZURE_API_VERSION_DOCS_NEW  = "2024-07-31"  # Document Intelligence (new)
+AZURE_API_VERSION_DOCS_OLD  = "2023-07-31"  # Form Recognizer (legacy)
 AZURE_API_VERSION_VISION    = "2024-02-01"  # Vision Image Analysis (Read)
 
 # --- App / CORS ---
-app = FastAPI(title="SplitChamp AI Backend", version="1.3.0")
+app = FastAPI(title="SplitChamp AI Backend", version="1.4.0")
 origins = [o.strip() for o in ALLOWED_ORIGINS.split(",")] if ALLOWED_ORIGINS else ["*"]
 app.add_middleware(
     CORSMiddleware,
@@ -82,13 +82,17 @@ class AnalyzeReq(BaseModel):
     image_base64: str
 
 class ReceiptItem(BaseModel):
+    # new optional fields are included but remain backward-compatible
+    id: Optional[str] = None
     description: str
     amount: float
+    category: Optional[str] = None  # 'food'|'alcohol'|'appetizer'|'tax'|'tip'|'ignore'
 
 class AnalyzeResp(BaseModel):
     merchant: Optional[str] = None
     date: Optional[str] = None
     total: Optional[float] = None
+    subtotal: Optional[float] = None   # NEW: sum of non tax/tip line items
     tax: Optional[float] = None
     tip: Optional[float] = None
     items: list[ReceiptItem]
@@ -117,13 +121,34 @@ def health():
 
 @app.get("/")
 def root():
-    return {"name": "SplitChamp AI Backend", "version": "1.3.0", "health": "/health"}
+    return {"name": "SplitChamp AI Backend", "version": "1.4.0", "health": "/health"}
 
 # ---- Helpers ----
 def _to_b64_jpeg(raw: bytes) -> str:
     if len(raw) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="Image too large; please send < 10MB")
     return base64.b64encode(raw).decode("utf-8")
+
+def _mk_id(desc: str, amt: float, idx: int) -> str:
+    # stable-ish id so client can assign items by id
+    return hashlib.sha1(f"{desc}|{amt}|{idx}".encode("utf-8")).hexdigest()[:12]
+
+_ALC = ["beer","wine","lager","ipa","ale","stout","sauvignon","cabernet","merlot","riesling","pinot",
+        "vodka","tequila","whiskey","bourbon","rum","sake","soju","cocktail","margarita","mojito","martini","negroni"]
+_NONALC = ["soda","coke","pepsi","sprite","fanta","lemonade","juice","coffee","latte","tea","mocktail"]
+_APPS = ["app","appetizer","starter","fries","nachos","wings","edamame","chips","guac","dip","bread","garlic","calamari"]
+_IGNORE = ["subtotal","balance","rounding","change","cash","card","auth","approval"]
+
+def _category_of(name: str) -> str:
+    s = (name or "").lower()
+    if not s: return "food"
+    if "tax" in s: return "tax"
+    if "tip" in s or "gratuity" in s or "service charge" in s: return "tip"
+    if any(k in s for k in _IGNORE): return "ignore"
+    if any(k in s for k in _ALC): return "alcohol"
+    if any(k in s for k in _APPS): return "appetizer"
+    if any(k in s for k in _NONALC): return "food"  # treated as food for splitting
+    return "food"
 
 def _coerce_amounts(parsed: dict) -> dict:
     if not isinstance(parsed, dict) or "items" not in parsed or not isinstance(parsed["items"], list):
@@ -133,17 +158,23 @@ def _coerce_amounts(parsed: dict) -> dict:
             it["amount"] = float(it.get("amount", 0))
         except Exception:
             it["amount"] = 0.0
+    # ensure subtotal exists
+    if "subtotal" not in parsed:
+        notax = sum(x.get("amount", 0) for x in parsed["items"] if x.get("category") not in ("tax","tip"))
+        parsed["subtotal"] = round(float(notax), 2)
     return parsed
 
 def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: Optional[float] = None) -> dict:
     raw_items = d.get("items") or []
     cleaned: list[dict] = []
-    skip_tokens = {"SUBTOTAL", "CHANGE", "CASH", "CARD", "BALANCE", "AUTH", "TOTAL"}
+
+    # Basic cleanup and skip junk rows
+    skip_tokens = {"SUBTOTAL", "CHANGE", "CASH", "CARD", "BALANCE", "AUTH", "TOTAL", "ROUNDING"}
     for it in raw_items:
         try:
             desc = (it.get("description") or "Item").strip()
             amt = float(it.get("amount") or 0)
-            if amt == 0:
+            if amt <= 0:
                 continue
             if desc.upper() in skip_tokens:
                 continue
@@ -151,17 +182,33 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: O
         except Exception:
             continue
 
-    # Merge duplicates by description
+    # Merge duplicates by description (case-insensitive)
     merged: dict[str, float] = {}
+    order_keys: list[str] = []  # preserve first-seen order for stable ids
     for it in cleaned:
         k = it["description"].strip().lower()
-        merged[k] = round(merged.get(k, 0) + it["amount"], 2)
-    items_out = [{"description": k.title(), "amount": v} for k, v in merged.items()]
+        if k not in merged:
+            order_keys.append(k)
+            merged[k] = 0.0
+        merged[k] = round(merged[k] + it["amount"], 2)
 
-    # Numbers
+    # Numbers reported by the model(s)
     tax = round(float(d.get("tax") or 0), 2)
     tip = round(float(d.get("tip") or 0), 2)
-    sum_items = round(sum(x["amount"] for x in items_out), 2)
+
+    # Build item list with id + category
+    items_out = []
+    for i, k in enumerate(order_keys):
+        amt = merged[k]
+        cat = _category_of(k)
+        items_out.append({
+            "id": _mk_id(k, amt, i),
+            "description": k.title(),
+            "amount": amt,
+            "category": cat
+        })
+
+    sum_items = round(sum(x["amount"] for x in items_out if x["category"] not in ("tax","tip")), 2)
 
     # If model didn’t extract a tip but user provided a tip %, derive one
     if tip == 0 and tip_percent_override is not None:
@@ -178,13 +225,22 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: O
         if abs(total - computed) <= 0.02:
             total = computed
 
-    # Optionally include tax/tip as line items
+    # Optionally include tax/tip as line items (with ids + categories)
     if include_tax_tip:
-        if tax > 0: items_out.append({"description": "Tax", "amount": tax})
-        if tip > 0: items_out.append({"description": "Tip", "amount": tip})
+        if tax > 0:
+            items_out.append({"id": _mk_id("tax", tax, 99901), "description": "Tax", "amount": tax, "category": "tax"})
+        if tip > 0:
+            items_out.append({"id": _mk_id("tip", tip, 99902), "description": "Tip", "amount": tip, "category": "tip"})
 
-    return {"merchant": d.get("merchant"), "date": d.get("date"), "total": total,
-            "tax": tax, "tip": tip, "items": items_out}
+    return {
+        "merchant": d.get("merchant"),
+        "date": d.get("date"),
+        "total": total,
+        "subtotal": sum_items,
+        "tax": tax,
+        "tip": tip,
+        "items": items_out
+    }
 
 # ---------- Azure helpers ----------
 def _azure_analyze_receipt(image_bytes: bytes) -> Optional[dict]:
