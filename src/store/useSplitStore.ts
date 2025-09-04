@@ -13,13 +13,24 @@ export interface SplitState {
   expenses: Expense[];
   transfers: Transfer[];
 
+  // existing APIs
   addParticipant: (name: string) => void;
   removeParticipant: (id: string) => void;
   addExpense: (e: Omit<Expense, 'id'>) => void;
   removeExpense: (id: string) => void;
 
+  // compute + reset
   calculate: () => void;
   resetAll: () => void;
+
+  // NEW convenience APIs for the camera/parse flow
+  setParticipants: (p: Participant[]) => void;
+  createParticipantsByCount: (count: number) => Participant[]; // auto Person 1..N
+  upsertParticipantNames: (names: string[]) => void;           // rename in place
+  setExpenses: (
+    list: Omit<Expense, 'id'>[],
+    opts?: { overwrite?: boolean; assignToAllIfEmpty?: boolean }
+  ) => void; // bulk set/append parsed items
 
   _hasHydrated: boolean;
   _setHasHydrated: (v: boolean) => void;
@@ -37,11 +48,27 @@ export const useSplitStore = create<SplitState>()(
         set({ transfers });
       };
 
+      // helper: if an expense has empty splitAmong, assign to all participants
+      const normalizeExpenses = (
+        raw: Omit<Expense, 'id'>[],
+        assignToAllIfEmpty: boolean
+      ): Expense[] => {
+        const allIds = get().participants.map((p) => p.id);
+        return raw.map((e) => {
+          const splitAmong =
+            assignToAllIfEmpty && (!e.splitAmong || e.splitAmong.length === 0)
+              ? allIds
+              : e.splitAmong ?? [];
+          return { ...e, id: uid(), splitAmong };
+        });
+      };
+
       return {
         participants: [],
         expenses: [],
         transfers: [],
 
+        // ---------- existing actions ----------
         addParticipant: (name) => {
           set((s) => ({ participants: [...s.participants, { id: uid(), name }] }));
           recompute();
@@ -79,6 +106,48 @@ export const useSplitStore = create<SplitState>()(
 
         resetAll: () => set({ participants: [], expenses: [], transfers: [] }),
 
+        // ---------- NEW actions for camera/parse flow ----------
+        setParticipants: (p) => {
+          set({ participants: p });
+          recompute();
+        },
+
+        createParticipantsByCount: (count) => {
+          const participants: Participant[] = Array.from({ length: count }).map(
+            (_, i) => ({ id: uid(), name: `Person ${i + 1}` })
+          );
+          set((s) => ({ participants }));
+          recompute();
+          return participants;
+        },
+
+        upsertParticipantNames: (names) => {
+          const current = get().participants;
+          // ensure we have at least `names.length` participants
+          if (current.length < names.length) {
+            const toAdd = names.length - current.length;
+            const extras: Participant[] = Array.from({ length: toAdd }).map(
+              (_, i) => ({ id: uid(), name: `Person ${current.length + i + 1}` })
+            );
+            set({ participants: [...current, ...extras] });
+          }
+          const updated = get().participants.map((p, i) => ({
+            ...p,
+            name: names[i] ?? p.name,
+          }));
+          set({ participants: updated });
+          recompute();
+        },
+
+        setExpenses: (list, opts) => {
+          const { overwrite = true, assignToAllIfEmpty = true } = opts ?? {};
+          const normalized = normalizeExpenses(list, assignToAllIfEmpty);
+          set((s) => ({
+            expenses: overwrite ? normalized : [...s.expenses, ...normalized],
+          }));
+          recompute();
+        },
+
         _hasHydrated: false,
         _setHasHydrated: (v) => set({ _hasHydrated: v }),
       };
@@ -91,7 +160,7 @@ export const useSplitStore = create<SplitState>()(
       partialize: (s) => ({
         participants: s.participants,
         expenses: s.expenses,
-      }) as any, // keep typing simple across zustand versions
+      }) as any,
       onRehydrateStorage: () => (state) => {
         state?._setHasHydrated(true);
         // Recompute transfers right after hydration

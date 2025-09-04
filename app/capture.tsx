@@ -1,13 +1,13 @@
 // app/capture.tsx
-import { useEffect, useState } from 'react';
-import { View, Text, Button, Image, ActivityIndicator, Alert, Switch, TouchableOpacity, Modal, TextInput } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { View, Text, Button, Image, ActivityIndicator, Alert, Switch, TouchableOpacity, Modal, TextInput, ScrollView } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 import { useCameraPermissions } from 'expo-camera';
-import { Link } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { analyzeReceiptFromUri, hasApi } from '@/lib/ai';
 import { useSplitStore } from '@/store/useSplitStore';
 import { useTheme } from '../src/providers/theme';
@@ -28,14 +28,20 @@ export default function CaptureReceipt() {
   const [showHelp, setShowHelp] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
-  // CHANGED: keep as string for inputs, sanitize on change
+  // NEW: name editor modal
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [namesDraft, setNamesDraft] = useState<string[]>([]);
+
+  // Keep as strings for inputs; sanitize on change
   const [peopleCount, setPeopleCount] = useState('2');
   const [tipPercent, setTipPercent] = useState('20');
 
-  // OPTIONAL: auto-run analyze after "Continue"
-  const AUTO_ANALYZE_AFTER_CONTINUE = false; // flip to true if you want
+  // Optional: auto-run analyze after "Continue" (we keep false to show naming first)
+  const AUTO_ANALYZE_AFTER_CONTINUE = false;
 
-  const addExpense = useSplitStore(s => s.addExpense);
+  // Store actions (replace expenses instead of appending)
+  const setExpenses = useSplitStore(s => s.setExpenses);
+  const upsertParticipantNames = useSplitStore(s => s.upsertParticipantNames);
 
   useEffect(() => {
     if (permission && !permission.granted && permission.canAskAgain) {
@@ -50,11 +56,7 @@ export default function CaptureReceipt() {
         Alert.alert('Permission needed', 'Enable camera in system Settings to scan receipts.');
         return;
       }
-      const res = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
-        quality: 1, // capture full; we’ll compress in-app
-        exif: false,
-      });
+      const res = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 1, exif: false });
       if (!res.canceled) {
         setPhotoUri(res.assets[0].uri);
         setShowDetails(true); // prompt for people & tip right away
@@ -66,37 +68,63 @@ export default function CaptureReceipt() {
 
   const onPickFromGallery = async () => {
     try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        allowsMultipleSelection: false,
-        quality: 1,
-        exif: false,
-      });
+      const res = await ImagePicker.launchImageLibraryAsync({ allowsMultipleSelection: false, quality: 1, exif: false });
       if (!res.canceled) {
         setPhotoUri(res.assets[0].uri);
-        setShowDetails(true); // same after picking
+        setShowDetails(true);
       }
     } catch (err) {
       Alert.alert('Picker error', String(err));
     }
   };
 
-  // NEW: normalize + clamp values safely
+  // Normalize + clamp values safely
   const getNormalizedInputs = () => {
     const ppl = Math.max(1, parseInt((peopleCount || '1').replace(/[^0-9]/g, ''), 10) || 1);
     const tip = Math.min(100, Math.max(0, parseInt((tipPercent || '0').replace(/[^0-9]/g, ''), 10) || 0));
     return { ppl, tip };
   };
 
-  // NEW: validate on continue (optionally trigger analyze)
+  // Build default names for a given count, using store if already present
+  const defaultNamesFor = (count: number) => {
+    const existing = useSplitStore.getState().participants;
+    const base = existing.length ? existing.map(p => p.name || '') : [];
+    const out: string[] = [];
+    for (let i = 0; i < count; i++) {
+      out.push(base[i] || `Person ${i + 1}`);
+    }
+    return out;
+  };
+
+  // Validate on continue + auto-create/resync participants, then OPEN NAME MODAL
   const onContinueDetails = async () => {
     const { ppl, tip } = getNormalizedInputs();
-    // reflect normalized back to fields (in case user typed weird stuff)
     setPeopleCount(String(ppl));
     setTipPercent(String(tip));
+
+    const { participants, createParticipantsByCount } = useSplitStore.getState();
+    if (participants.length !== ppl) {
+      createParticipantsByCount?.(ppl); // regenerate to match desired count
+    }
+
+    // Prepare names draft and show naming modal
+    setNamesDraft(defaultNamesFor(ppl));
     setShowDetails(false);
+    setShowNameModal(true);
 
     if (AUTO_ANALYZE_AFTER_CONTINUE && photoUri) {
-      await onAnalyze(); // optional auto-run
+      // If you ever flip AUTO_ANALYZE to true, you'll likely want to do it after naming.
+    }
+  };
+
+  const onSaveNames = (doAnalyzeAfter?: boolean) => {
+    // Persist names into store
+    const trimmed = namesDraft.map(n => n.trim()).map((n, i) => (n.length ? n : `Person ${i + 1}`));
+    upsertParticipantNames?.(trimmed);
+    setShowNameModal(false);
+
+    if (doAnalyzeAfter && photoUri) {
+      onAnalyze();
     }
   };
 
@@ -121,25 +149,21 @@ export default function CaptureReceipt() {
       return;
     }
 
-    const participants = useSplitStore.getState().participants;
-    if (participants.length === 0) {
-      Alert.alert('Add participants first', 'Please add at least one participant before analyzing.');
-      return;
-    }
-
-    // NEW: always use normalized numbers (never NaN)
+    // Always use normalized numbers and ensure participants exist
     const { ppl, tip } = getNormalizedInputs();
+    const state = useSplitStore.getState();
+    if (state.participants.length === 0) {
+      state.createParticipantsByCount?.(ppl); // auto-create Person 1..N
+      // also seed draft names if the user skipped earlier
+      setNamesDraft(defaultNamesFor(ppl));
+    }
 
     setLoading(true);
     try {
+      // Validate image
       const info = await FileSystem.getInfoAsync(photoUri, { size: true });
-      if (!info.exists) {
-        Alert.alert('File not found', 'Please retake the photo.');
-        setLoading(false);
-        return;
-      }
-      if ('isDirectory' in info && info.isDirectory) {
-        Alert.alert('Invalid file', 'Selected path is a directory, not an image.');
+      if (!info.exists || ('isDirectory' in info && info.isDirectory)) {
+        Alert.alert('Invalid image', 'Please retake the photo.');
         setLoading(false);
         return;
       }
@@ -152,26 +176,21 @@ export default function CaptureReceipt() {
       );
 
       const postInfo = await FileSystem.getInfoAsync(manipulated.uri, { size: true });
-      if (postInfo.exists && 'size' in postInfo && typeof postInfo.size === 'number') {
-        if (postInfo.size > 8 * 1024 * 1024) {
-          Alert.alert('Image too large', 'Try a closer photo that fills the frame (under ~8MB).');
-          setLoading(false);
-          return;
-        }
+      if (postInfo.exists && 'size' in postInfo && typeof postInfo.size === 'number' && postInfo.size > 8 * 1024 * 1024) {
+        Alert.alert('Image too large', 'Try a closer photo that fills the frame (under ~8MB).');
+        setLoading(false);
+        return;
       }
 
       // Send as multipart file and pass preferences + people/tip
       const result = await analyzeReceiptFromUri(manipulated.uri, {
         includeTaxTip,
-        people: ppl,        // CHANGED: safe numbers
-        tipPercent: tip,    // CHANGED: safe numbers
+        people: ppl,
+        tipPercent: tip,
       });
 
       if (!result?.items?.length) {
-        Alert.alert(
-          'No items found',
-          'We couldn’t detect line items. Retake with better lighting and ensure the whole receipt is visible.'
-        );
+        Alert.alert('No items found', 'Retake with better lighting and ensure the whole receipt is visible.');
         setLoading(false);
         return;
       }
@@ -181,61 +200,58 @@ export default function CaptureReceipt() {
       const defaultPayer = participantsState[0]?.id ?? '';
 
       if (asItemized) {
-        // Build itemized entries
+        // Clean single, itemized expense — each sub-item MUST include an id
+        const hasTaxItem = result.items.some((it: any) => String(it.description || '').toLowerCase() === 'tax');
+        const hasTipItem = result.items.some((it: any) => String(it.description || '').toLowerCase() === 'tip');
+
         const items = result.items.map((it: any, idx: number) => ({
-          id: `${Date.now()}_${idx}`,
-          description: it.description ?? 'Item',
+          id: `it_${Date.now()}_${idx}`,
+          description: it.description ?? `Item ${idx + 1}`,
           amount: Number(it.amount ?? 0),
           splitAmong: everyone,
         }));
 
-        // Avoid double-counting: if server already included Tax/Tip as items,
-        // don't add top-level tax/tip again.
-        const hasTaxItem = result.items.some(
-          (it: any) => String(it.description || '').toLowerCase() === 'tax'
-        );
-        const hasTipItem = result.items.some(
-          (it: any) => String(it.description || '').toLowerCase() === 'tip'
-        );
-
         const itemsTotal = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
         let tax = Number(result.tax || 0);
         let tipAmt = Number(result.tip || 0);
-        if (includeTaxTip && hasTaxItem) tax = 0; // already in items
-        if (includeTaxTip && hasTipItem) tipAmt = 0; // already in items
+        if (includeTaxTip && hasTaxItem) tax = 0;
+        if (includeTaxTip && hasTipItem) tipAmt = 0;
 
         const total = itemsTotal + tax + tipAmt;
 
-        addExpense({
-          description: result.merchant || 'Receipt',
-          amount: total,
-          paidBy: defaultPayer,
-          splitAmong: everyone,
-          splitMethod: 'itemized',
-          items,
-          tax,
-          tip: tipAmt,
-        });
-
-        const engine = result.engine ? ` (${result.engine})` : '';
-        Alert.alert('Parsed!', `Imported 1 itemized expense with ${items.length} items${engine}.`);
+        setExpenses(
+          [
+            {
+              description: result.merchant || 'Receipt',
+              amount: total,
+              paidBy: defaultPayer,
+              splitAmong: everyone,
+              splitMethod: 'itemized',
+              items,
+              tax,
+              tip: tipAmt,
+            },
+          ],
+          { overwrite: true, assignToAllIfEmpty: true }
+        );
       } else {
-        // Import each line as its own expense
-        result.items.forEach((it: any, idx: number) => {
-          addExpense({
-            description: it.description ?? `Item ${idx + 1}`,
-            amount: Number(it.amount ?? 0),
-            paidBy: it.paidById ?? defaultPayer,
-            splitAmong: it.splitAmongIds?.length ? it.splitAmongIds : everyone,
-          });
-        });
-        const engine = result.engine ? ` (${result.engine})` : '';
-        Alert.alert('Parsed!', `Added ${result.items.length} expense(s)${engine}.`);
+        // Separate expenses, also replace
+        const list = result.items.map((it: any, idx: number) => ({
+          description: it.description ?? `Item ${idx + 1}`,
+          amount: Number(it.amount ?? 0),
+          paidBy: it.paidById ?? defaultPayer,
+          splitAmong: it.splitAmongIds?.length ? it.splitAmongIds : everyone,
+        }));
+
+        setExpenses(list, { overwrite: true, assignToAllIfEmpty: true });
       }
+
+      // Clean navigation — replace instead of push
+      setPhotoUri(null); // optional reset so UI is ready for next scan
+      router.replace('/summary');
     } catch (err: any) {
       const msg = `${err?.message || err}`;
-      const looksNetwork =
-        msg.includes('Network') || msg.includes('timeout') || msg.includes('fetch');
+      const looksNetwork = msg.includes('Network') || msg.includes('timeout') || msg.includes('fetch');
       if (looksNetwork) {
         Alert.alert('Network issue', 'Couldn’t reach the AI service. Check your connection and try again.');
       } else {
@@ -273,16 +289,14 @@ export default function CaptureReceipt() {
         </Text>
       </View>
 
-      {/* Tip/Tax toggle (controls server behavior) */}
+      {/* Tip/Tax toggle */}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <Switch
           value={includeTaxTip}
           onValueChange={setIncludeTaxTip}
           trackColor={{ true: theme.accent, false: '#bbb' }}
         />
-        <Text style={{ color: theme.text }}>
-          Split Tip & Tax
-        </Text>
+        <Text style={{ color: theme.text }}>Split Tip & Tax</Text>
       </View>
 
       {!hasApi && (
@@ -299,7 +313,6 @@ export default function CaptureReceipt() {
           <View style={{ borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: theme.border }}>
             <Button title="Pick From Gallery" onPress={onPickFromGallery} color={theme.accent} />
           </View>
-          {/* Optional micro-hint */}
           <Text style={{ color: theme.text, opacity: 0.7 }}>
             Pro tip: Fill the frame, avoid glare.
           </Text>
@@ -356,7 +369,7 @@ export default function CaptureReceipt() {
                 <Text style={{ fontWeight:"600", marginBottom:6, color: theme.text }}>How many people?</Text>
                 <TextInput
                   value={peopleCount}
-                  onChangeText={(t) => setPeopleCount(t.replace(/[^0-9]/g, ''))}  // CHANGED: sanitize
+                  onChangeText={(t) => setPeopleCount(t.replace(/[^0-9]/g, ''))}
                   keyboardType="number-pad"
                   style={{ borderWidth:1, borderColor:"#e2e8f0", borderRadius:10, padding:12, color: theme.text }}
                   placeholder="2"
@@ -367,7 +380,7 @@ export default function CaptureReceipt() {
                 <Text style={{ fontWeight:"600", marginBottom:6, color: theme.text }}>Tip %</Text>
                 <TextInput
                   value={tipPercent}
-                  onChangeText={(t) => setTipPercent(t.replace(/[^0-9]/g, ''))} // CHANGED: sanitize
+                  onChangeText={(t) => setTipPercent(t.replace(/[^0-9]/g, ''))}
                   keyboardType="number-pad"
                   style={{ borderWidth:1, borderColor:"#e2e8f0", borderRadius:10, padding:12, color: theme.text }}
                   placeholder="20"
@@ -377,11 +390,62 @@ export default function CaptureReceipt() {
             </View>
 
             <TouchableOpacity
-              onPress={onContinueDetails}   // CHANGED: validates + closes (and can auto-run)
+              onPress={onContinueDetails}
               style={{ backgroundColor:"#2563EB", padding:14, borderRadius:12, alignItems:"center", marginTop:16 }}
             >
               <Text style={{ color:"white", fontWeight:"700" }}>Continue</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Name participants modal */}
+      <Modal transparent visible={showNameModal} animationType="slide" onRequestClose={() => setShowNameModal(false)}>
+        <View style={{ flex:1, backgroundColor:"rgba(0,0,0,0.45)", justifyContent:"flex-end" }}>
+          <View style={{ backgroundColor: theme.card, padding:20, borderTopLeftRadius:20, borderTopRightRadius:20, borderTopWidth: 1, borderColor: theme.border, maxHeight: '80%' }}>
+            <Text style={{ fontSize:18, fontWeight:"700", marginBottom:12, color: theme.text }}>Name the participants</Text>
+
+            <ScrollView style={{ maxHeight: 300 }}>
+              {namesDraft.map((n, i) => (
+                <View key={i} style={{ marginBottom: 10 }}>
+                  <Text style={{ color: theme.text, marginBottom: 6 }}>Person {i + 1}</Text>
+                  <TextInput
+                    value={n}
+                    onChangeText={(t) => {
+                      const copy = [...namesDraft];
+                      copy[i] = t;
+                      setNamesDraft(copy);
+                    }}
+                    placeholder={`Person ${i + 1}`}
+                    placeholderTextColor="#94a3b8"
+                    style={{ borderWidth:1, borderColor:"#e2e8f0", borderRadius:10, padding:12, color: theme.text }}
+                  />
+                </View>
+              ))}
+            </ScrollView>
+
+            <View style={{ flexDirection:'row', gap: 12, marginTop: 12 }}>
+              <TouchableOpacity
+                onPress={() => setShowNameModal(false)} // Skip naming
+                style={{ flex:1, padding:14, borderRadius:12, alignItems:'center', borderWidth:1, borderColor: theme.border, backgroundColor: theme.bg }}
+              >
+                <Text style={{ color: theme.text, fontWeight:'700' }}>Skip</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => onSaveNames(false)}
+                style={{ flex:1, padding:14, borderRadius:12, alignItems:'center', backgroundColor: theme.card, borderWidth:1, borderColor: theme.border }}
+              >
+                <Text style={{ color: theme.text, fontWeight:'700' }}>Save names</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => onSaveNames(true)}
+                style={{ flex:1, padding:14, borderRadius:12, alignItems:'center', backgroundColor:"#2563EB" }}
+              >
+                <Text style={{ color: '#fff', fontWeight:'700' }}>Save & Analyze</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

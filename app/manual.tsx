@@ -1,5 +1,5 @@
 // app/manual.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
 import {
@@ -31,17 +31,35 @@ export default function Home() {
   const removeExpense = useSplitStore(s => s.removeExpense);
   const removeParticipant = useSplitStore(s => s.removeParticipant);
   const resetAll = useSplitStore(s => s.resetAll);
+  const createParticipantsByCount = useSplitStore(s => s.createParticipantsByCount);
 
+  // Heuristic: "fresh scan result" = single itemized expense with items
+  const isScanResultLikely = useMemo(() => {
+    if (expenses.length !== 1) return false;
+    const e = expenses[0] as any;
+    return e?.splitMethod === 'itemized' && Array.isArray(e?.items) && e.items.length > 0;
+  }, [expenses]);
+
+  // Collapsible state
+  const [collapseParticipants, setCollapseParticipants] = useState(false);
+  const [collapseExpenses, setCollapseExpenses] = useState(false);
+
+  // Auto-collapse when a scan result likely exists
+  useEffect(() => {
+    if (isScanResultLikely) {
+      setCollapseParticipants(true);
+      setCollapseExpenses(true);
+    }
+  }, [isScanResultLikely]);
+
+  // Intro
   const [showIntro, setShowIntro] = useState(false);
-
-  // Intro once
   useEffect(() => {
     (async () => {
       const seen = await AsyncStorage.getItem('seen_intro');
       if (!seen) setShowIntro(true);
     })();
   }, []);
-
   const closeIntro = async () => {
     setShowIntro(false);
     await AsyncStorage.setItem('seen_intro', 'true');
@@ -56,48 +74,152 @@ export default function Home() {
     );
   }
 
+  // Small header toggle component
+  const SectionHeader = ({
+    title,
+    collapsed,
+    onToggle,
+  }: {
+    title: string;
+    collapsed: boolean;
+    onToggle: () => void;
+  }) => (
+    <Pressable
+      onPress={onToggle}
+      style={{
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 4,
+        marginBottom: 8,
+      }}
+    >
+      <Text style={[styles.sectionTitle, { color: theme.text }]}>{title}</Text>
+      <Text style={{ color: theme.text, opacity: 0.7 }}>{collapsed ? 'Show' : 'Hide'}</Text>
+    </Pressable>
+  );
+
   return (
     <>
       <ScrollView contentContainerStyle={[styles.container, { backgroundColor: theme.bg }]}>
         <View style={[styles.gap16, { backgroundColor: theme.bg }]}>
 
-          {/* Participant + Expense forms */}
-          <ParticipantForm />
-          <ExpenseForm />
+          {/* QUICK START: add participants fast (kept visible even when collapsed) */}
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderColor: theme.border,
+              borderWidth: 1,
+              borderRadius: 12,
+              padding: 12,
+              gap: 8,
+            }}
+          >
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ color: theme.text, fontWeight: '700' }}>Quick start</Text>
+              {/* Global expand/collapse */}
+              {(participants.length > 0 || expenses.length > 0) && (
+                <Pressable
+                  onPress={() => {
+                    const next = collapseParticipants || collapseExpenses ? false : true;
+                    setCollapseParticipants(next);
+                    setCollapseExpenses(next);
+                  }}
+                  style={{ paddingVertical: 4, paddingHorizontal: 8 }}
+                >
+                  <Text style={{ color: theme.text, opacity: 0.8 }}>
+                    {collapseParticipants || collapseExpenses ? 'Expand all' : 'Collapse all'}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
 
-          {/* Participants Section */}
-          <View style={[styles.section, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>Participants</Text>
             {participants.length === 0 ? (
-              <Text style={{ color: theme.text }}>None yet</Text>
-            ) : (
-              participants.map((p: Participant) => (
-                <View key={p.id} style={styles.row}>
-                  <Text style={{ color: theme.text }}>{p.name}</Text>
-                  <Pressable onPress={() => removeParticipant(p.id)} style={styles.dangerBtn}>
-                    <Text style={styles.btnText}>Remove</Text>
-                  </Pressable>
+              <>
+                <Text style={{ color: theme.text, opacity: 0.8 }}>
+                  Add people in one tap. You can rename them later.
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {[2, 3, 4].map(n => (
+                    <Pressable
+                      key={n}
+                      onPress={() => createParticipantsByCount?.(n)}
+                      style={{
+                        paddingVertical: 8,
+                        paddingHorizontal: 12,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: theme.border,
+                        backgroundColor: theme.bg,
+                      }}
+                    >
+                      <Text style={{ color: theme.text }}>{n} people</Text>
+                    </Pressable>
+                  ))}
                 </View>
-              ))
+              </>
+            ) : (
+              <Text style={{ color: theme.text, opacity: 0.8 }}>
+                Participants are set. Add expenses or go straight to Summary.
+              </Text>
             )}
           </View>
 
-          {/* Expenses Section */}
+          {/* Forms (still available) */}
+          <ParticipantForm />
+          <ExpenseForm />
+
+          {/* Participants Section (collapsible) */}
           <View style={[styles.section, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>Expenses</Text>
-            {expenses.length === 0 ? (
-              <Text style={{ color: theme.text }}>No expenses added yet.</Text>
-            ) : (
-              expenses.map((e: Expense) => (
-                <View key={e.id} style={styles.row}>
-                  <Text style={{ color: theme.text }}>
-                    {e.description} — ${e.amount.toFixed(2)}
-                  </Text>
-                  <Pressable onPress={() => removeExpense(e.id)} style={styles.dangerBtn}>
-                    <Text style={styles.btnText}>Remove</Text>
-                  </Pressable>
-                </View>
-              ))
+            <SectionHeader
+              title="Participants"
+              collapsed={collapseParticipants}
+              onToggle={() => setCollapseParticipants(v => !v)}
+            />
+
+            {!collapseParticipants && (
+              <>
+                {participants.length === 0 ? (
+                  <Text style={{ color: theme.text }}>None yet</Text>
+                ) : (
+                  participants.map((p: Participant) => (
+                    <View key={p.id} style={styles.row}>
+                      <Text style={{ color: theme.text }}>{p.name}</Text>
+                      <Pressable onPress={() => removeParticipant(p.id)} style={styles.dangerBtn}>
+                        <Text style={styles.btnText}>Remove</Text>
+                      </Pressable>
+                    </View>
+                  ))
+                )}
+              </>
+            )}
+          </View>
+
+          {/* Expenses Section (collapsible) */}
+          <View style={[styles.section, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+            <SectionHeader
+              title="Expenses"
+              collapsed={collapseExpenses}
+              onToggle={() => setCollapseExpenses(v => !v)}
+            />
+
+            {!collapseExpenses && (
+              <>
+                {expenses.length === 0 ? (
+                  <Text style={{ color: theme.text }}>No expenses added yet.</Text>
+                ) : (
+                  expenses.map((e: Expense) => (
+                    <View key={e.id} style={styles.row}>
+                      <Text style={{ color: theme.text }}>
+                        {e.description} — ${e.amount.toFixed(2)}
+                      </Text>
+                      <Pressable onPress={() => removeExpense(e.id)} style={styles.dangerBtn}>
+                        <Text style={styles.btnText}>Remove</Text>
+                      </Pressable>
+                    </View>
+                  ))
+                )}
+              </>
             )}
           </View>
 
@@ -130,9 +252,9 @@ export default function Home() {
         <View style={[styles.modalOverlay, { backgroundColor: '#00000080' }]}>
           <View style={[styles.modalCard, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
             <Text style={[styles.modalTitle, { color: theme.text }]}>👋 Welcome to SplitChamp AI</Text>
-            <Text style={[styles.modalText, { color: theme.text }]}>• Add participants</Text>
-            <Text style={[styles.modalText, { color: theme.text }]}>• Add expenses</Text>
-            <Text style={[styles.modalText, { color: theme.text }]}>• We auto-calc who owes who</Text>
+            <Text style={[styles.modalText, { color: theme.text }]}>• Add people (quick buttons above)</Text>
+            <Text style={[styles.modalText, { color: theme.text }]}>• Add expenses or scan a receipt</Text>
+            <Text style={[styles.modalText, { color: theme.text }]}>• We auto-calculate who owes who</Text>
             <Pressable onPress={closeIntro} style={[styles.modalBtn, { backgroundColor: theme.accent }]}>
               <Text style={[styles.modalBtnText, { color: '#fff' }]}>Get Started</Text>
             </Pressable>
