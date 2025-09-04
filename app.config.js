@@ -19,7 +19,7 @@ export default {
     assetBundlePatterns: ["**/*"],
     ios: {
       bundleIdentifier: "com.willckim.splitchamp",
-      buildNumber: "2",
+      buildNumber: "3", // ⬅️ bumped from 2 → 3
       supportsTablet: true,
       infoPlist: {
         NSCameraUsageDescription: "SplitChamp uses the camera to capture receipt photos for AI parsing."
@@ -27,7 +27,7 @@ export default {
     },
     android: {
       package: "com.willckim.splitchamp",
-      versionCode: 2,
+      versionCode: 3, // ⬅️ bumped from 2 → 3
       edgeToEdgeEnabled: true,
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon.png",
