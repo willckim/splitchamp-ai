@@ -13,6 +13,7 @@ import {
   ViewStyle,
   StyleProp,
   Modal,
+  TextInput,
 } from 'react-native';
 import ParticipantForm from '../src/components/ParticipantForm';
 import ExpenseForm from '../src/components/ExpenseForm';
@@ -32,6 +33,7 @@ export default function Home() {
   const removeParticipant = useSplitStore(s => s.removeParticipant);
   const resetAll = useSplitStore(s => s.resetAll);
   const createParticipantsByCount = useSplitStore(s => s.createParticipantsByCount);
+  const upsertParticipantNames = useSplitStore(s => s.upsertParticipantNames);
 
   // Heuristic: "fresh scan result" = single itemized expense with items
   const isScanResultLikely = useMemo(() => {
@@ -65,6 +67,19 @@ export default function Home() {
     await AsyncStorage.setItem('seen_intro', 'true');
   };
 
+  // Rename modal
+  const [showRename, setShowRename] = useState(false);
+  const [namesDraft, setNamesDraft] = useState<string[]>([]);
+  const openRename = () => {
+    setNamesDraft(participants.map(p => p.name || ''));
+    setShowRename(true);
+  };
+  const saveRename = () => {
+    const cleaned = namesDraft.map((n, i) => (n.trim().length ? n.trim() : `Person ${i + 1}`));
+    upsertParticipantNames(cleaned);
+    setShowRename(false);
+  };
+
   if (!hasHydrated) {
     return (
       <View style={[styles.loading, { backgroundColor: theme.bg }]}>
@@ -79,11 +94,7 @@ export default function Home() {
     title,
     collapsed,
     onToggle,
-  }: {
-    title: string;
-    collapsed: boolean;
-    onToggle: () => void;
-  }) => (
+  }: { title: string; collapsed: boolean; onToggle: () => void }) => (
     <Pressable
       onPress={onToggle}
       style={{
@@ -101,10 +112,16 @@ export default function Home() {
 
   return (
     <>
-      <ScrollView contentContainerStyle={[styles.container, { backgroundColor: theme.bg }]}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[
+          styles.container,
+          { backgroundColor: theme.bg, paddingBottom: 120 } // extra room for small screens/OS bars
+        ]}
+      >
         <View style={[styles.gap16, { backgroundColor: theme.bg }]}>
 
-          {/* QUICK START: add participants fast (kept visible even when collapsed) */}
+          {/* QUICK START */}
           <View
             style={{
               backgroundColor: theme.card,
@@ -117,8 +134,8 @@ export default function Home() {
           >
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={{ color: theme.text, fontWeight: '700' }}>Quick start</Text>
-              {/* Global expand/collapse */}
-              {(participants.length > 0 || expenses.length > 0) && (
+
+              {(participants.length > 0 || expenses.length > 0) ? (
                 <Pressable
                   onPress={() => {
                     const next = collapseParticipants || collapseExpenses ? false : true;
@@ -131,7 +148,7 @@ export default function Home() {
                     {collapseParticipants || collapseExpenses ? 'Expand all' : 'Collapse all'}
                   </Text>
                 </Pressable>
-              )}
+              ) : null}
             </View>
 
             {participants.length === 0 ? (
@@ -139,7 +156,7 @@ export default function Home() {
                 <Text style={{ color: theme.text, opacity: 0.8 }}>
                   Add people in one tap. You can rename them later.
                 </Text>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                   {[2, 3, 4].map(n => (
                     <Pressable
                       key={n}
@@ -159,13 +176,46 @@ export default function Home() {
                 </View>
               </>
             ) : (
-              <Text style={{ color: theme.text, opacity: 0.8 }}>
-                Participants are set. Add expenses or go straight to Summary.
-              </Text>
+              <View style={{ gap: 8 }}>
+                <Text style={{ color: theme.text, opacity: 0.8 }}>
+                  Participants are set. Rename or add expenses below.
+                </Text>
+
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                  <Pressable
+                    onPress={openRename}
+                    style={{
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: theme.border,
+                      backgroundColor: theme.bg,
+                    }}
+                  >
+                    <Text style={{ color: theme.text, fontWeight: '600' }}>Rename</Text>
+                  </Pressable>
+
+                  <Link href="/capture" asChild>
+                    <Pressable
+                      style={{
+                        paddingVertical: 8,
+                        paddingHorizontal: 12,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: theme.border,
+                        backgroundColor: theme.bg,
+                      }}
+                    >
+                      <Text style={{ color: theme.text }}>Scan Receipt (AI)</Text>
+                    </Pressable>
+                  </Link>
+                </View>
+              </View>
             )}
           </View>
 
-          {/* Forms (still available) */}
+          {/* Forms */}
           <ParticipantForm />
           <ExpenseForm />
 
@@ -183,11 +233,38 @@ export default function Home() {
                   <Text style={{ color: theme.text }}>None yet</Text>
                 ) : (
                   participants.map((p: Participant) => (
-                    <View key={p.id} style={styles.row}>
-                      <Text style={{ color: theme.text }}>{p.name}</Text>
-                      <Pressable onPress={() => removeParticipant(p.id)} style={styles.dangerBtn}>
-                        <Text style={styles.btnText}>Remove</Text>
-                      </Pressable>
+                    <View
+                      key={p.id}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        flexWrap: 'wrap',          // wrap on small screens
+                        paddingVertical: 6,
+                      }}
+                    >
+                      <Text
+                        style={{ color: theme.text, fontSize: 16, flexShrink: 1, maxWidth: '60%' }}
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                      >
+                        {p.name}
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <Pressable
+                          onPress={openRename}
+                          style={[styles.navCard, { paddingVertical: 8, minWidth: 96, alignItems: 'center' }]}
+                        >
+                          <Text style={{ color: theme.text }}>Rename</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => removeParticipant(p.id)}
+                          style={[styles.dangerBtn, { paddingVertical: 8, minWidth: 96, alignItems: 'center' }]}
+                        >
+                          <Text style={styles.btnText}>Remove</Text>
+                        </Pressable>
+                      </View>
                     </View>
                   ))
                 )}
@@ -209,11 +286,28 @@ export default function Home() {
                   <Text style={{ color: theme.text }}>No expenses added yet.</Text>
                 ) : (
                   expenses.map((e: Expense) => (
-                    <View key={e.id} style={styles.row}>
-                      <Text style={{ color: theme.text }}>
+                    <View
+                      key={e.id}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        flexWrap: 'wrap',          // wrap on small screens
+                        paddingVertical: 6,
+                      }}
+                    >
+                      <Text
+                        style={{ color: theme.text, flexShrink: 1, maxWidth: '60%' }}
+                        numberOfLines={2}
+                        ellipsizeMode="tail"
+                      >
                         {e.description} — ${e.amount.toFixed(2)}
                       </Text>
-                      <Pressable onPress={() => removeExpense(e.id)} style={styles.dangerBtn}>
+                      <Pressable
+                        onPress={() => removeExpense(e.id)}
+                        style={[styles.dangerBtn, { paddingVertical: 8, minWidth: 96, alignItems: 'center' }]}
+                      >
                         <Text style={styles.btnText}>Remove</Text>
                       </Pressable>
                     </View>
@@ -223,10 +317,10 @@ export default function Home() {
             )}
           </View>
 
-          {/* Summary (auto-updates) */}
+          {/* Summary */}
           <SummaryCard />
 
-          {/* Navigation Buttons */}
+          {/* Navigation */}
           <View style={styles.navGrid}>
             <Link href="/summary" asChild>
               <NavCard label="Open Summary" />
@@ -258,6 +352,50 @@ export default function Home() {
             <Pressable onPress={closeIntro} style={[styles.modalBtn, { backgroundColor: theme.accent }]}>
               <Text style={[styles.modalBtnText, { color: '#fff' }]}>Get Started</Text>
             </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Rename participants modal */}
+      <Modal transparent visible={showRename} animationType="slide" onRequestClose={() => setShowRename(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.45)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor: theme.card, padding:20, borderTopLeftRadius:20, borderTopRightRadius:20, borderTopWidth:1, borderColor: theme.border }}>
+            <Text style={{ fontSize:18, fontWeight:'700', marginBottom:12, color: theme.text }}>
+              Rename participants
+            </Text>
+
+            {participants.map((p, i) => (
+              <View key={p.id} style={{ marginBottom: 10 }}>
+                <Text style={{ color: theme.text, marginBottom: 6 }}>Person {i + 1}</Text>
+                <TextInput
+                  value={namesDraft[i] ?? p.name}
+                  onChangeText={(t) => {
+                    const copy = [...namesDraft];
+                    copy[i] = t;
+                    setNamesDraft(copy);
+                  }}
+                  placeholder={`Person ${i + 1}`}
+                  placeholderTextColor="#94a3b8"
+                  style={{ borderWidth:1, borderColor:"#e2e8f0", borderRadius:10, padding:12, color: theme.text }}
+                />
+              </View>
+            ))}
+
+            <View style={{ flexDirection:'row', gap:12, marginTop:12 }}>
+              <Pressable
+                onPress={() => setShowRename(false)}
+                style={{ flex:1, padding:14, borderRadius:12, alignItems:'center', borderWidth:1, borderColor: theme.border, backgroundColor: theme.bg }}
+              >
+                <Text style={{ color: theme.text, fontWeight:'700' }}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={saveRename}
+                style={{ flex:1, padding:14, borderRadius:12, alignItems:'center', backgroundColor: theme.accent }}
+              >
+                <Text style={{ color:'#fff', fontWeight:'700' }}>Save</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>

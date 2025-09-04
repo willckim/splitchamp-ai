@@ -15,8 +15,11 @@ export default function SummaryScreen() {
 
   return (
     <View style={{ flex: 1, padding: 16, backgroundColor: theme.bg }}>
-      <Text style={{ fontSize: 22, fontWeight: '800', color: theme.text }}>Summary</Text>
+      <Text style={{ fontSize: 22, fontWeight: '800', color: theme.text, marginBottom: 8 }}>
+        Summary
+      </Text>
 
+      {/* SummaryCard already shows Receipt total once */}
       <SummaryCard />
 
       <View style={{ marginTop: 16, gap: 10 }}>
@@ -28,17 +31,33 @@ export default function SummaryScreen() {
 
         <View style={styles.navGrid}>
           <Link href="/capture" asChild>
-            <Pressable style={[styles.navCard, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+            <Pressable
+              style={[
+                styles.navCard,
+                { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }
+              ]}
+            >
               <Text style={[styles.navCardText, { color: theme.text }]}>New Scan</Text>
             </Pressable>
           </Link>
 
-          <Pressable onPress={resetAll} style={[styles.navCard, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+          <Pressable
+            onPress={resetAll}
+            style={[
+              styles.navCard,
+              { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }
+            ]}
+          >
             <Text style={[styles.navCardText, { color: theme.text }]}>Start Over</Text>
           </Pressable>
 
           <Link href="/manual" asChild>
-            <Pressable style={[styles.navCard, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
+            <Pressable
+              style={[
+                styles.navCard,
+                { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }
+              ]}
+            >
               <Text style={[styles.navCardText, { color: theme.text }]}>Edit Manually</Text>
             </Pressable>
           </Link>

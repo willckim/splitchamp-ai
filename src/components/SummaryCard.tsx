@@ -11,6 +11,7 @@ function SummaryCardImpl() {
   const { theme } = useTheme();
   const transfers = useSplitStore(s => s.transfers);
   const participants = useSplitStore(s => s.participants);
+  const expenses = useSplitStore(s => s.expenses);
 
   const nameOf = useMemo(() => {
     const m = new Map<string, string>();
@@ -18,16 +19,16 @@ function SummaryCardImpl() {
     return (id: string) => m.get(id) ?? 'Unknown';
   }, [participants]);
 
-  // Empty state — friendly card
+  const receiptTotal = useMemo(
+    () => expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0),
+    [expenses]
+  );
+
+  // Empty state
   if (!transfers.length) {
     return (
       <View style={{ marginTop: 12 }}>
-        <View
-          style={[
-            styles.subtleCard,
-            { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 },
-          ]}
-        >
+        <View style={[styles.subtleCard, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
           <Text style={{ fontWeight: '800', marginBottom: 4, color: theme.text }}>
             Nothing to settle
           </Text>
@@ -42,12 +43,7 @@ function SummaryCardImpl() {
   const totalToSettle = transfers.reduce((s, t) => s + t.amount, 0);
 
   return (
-    <View
-      style={[
-        styles.card,
-        { marginTop: 12, backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 },
-      ]}
-    >
+    <View style={[styles.card, { marginTop: 12, backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }]}>
       <Text style={{ fontWeight: '800', fontSize: 18, marginBottom: 8, color: theme.text }}>
         Who owes who what
       </Text>
@@ -60,7 +56,7 @@ function SummaryCardImpl() {
         ))}
       </View>
 
-      {/* Divider + footer */}
+      {/* Divider */}
       <View
         style={{
           height: 1,
@@ -69,6 +65,15 @@ function SummaryCardImpl() {
           opacity: 0.9,
         }}
       />
+
+      {/* Receipt total for quick math check */}
+      {expenses.length > 0 && (
+        <Text style={{ color: theme.text, opacity: 0.75, marginBottom: 4 }}>
+          Receipt total:{' '}
+          <Text style={{ fontWeight: '800', color: theme.text }}>{fmt(receiptTotal)}</Text>
+        </Text>
+      )}
+
       <Text style={{ color: theme.text, opacity: 0.75 }}>
         Total to settle:{' '}
         <Text style={{ fontWeight: '800', color: theme.text }}>{fmt(totalToSettle)}</Text>
