@@ -10,7 +10,7 @@ import { useCameraPermissions } from 'expo-camera';
 import { Link, router } from 'expo-router';
 import { analyzeReceiptFromUri, hasApi } from '@/lib/ai';
 import { useSplitStore } from '@/store/useSplitStore';
-import { useTheme } from '../src/providers/theme';
+import { useTheme } from '@/providers/theme';
 
 function PostAnalyzeSheet({
   visible,
@@ -257,7 +257,7 @@ export default function CaptureReceipt() {
           id: it.id || `it_${Date.now()}_${idx}`,
           description: it.description ?? `Item ${idx + 1}`,
           amount: Number(it.amount ?? 0),
-          splitAmong: everyone,
+          splitAmong: [],
           // optional: category: it.category
         }));
 
@@ -282,7 +282,7 @@ export default function CaptureReceipt() {
               tip: tipAmt,
             },
           ],
-          { overwrite: true, assignToAllIfEmpty: true }
+          { overwrite: true, assignToAllIfEmpty: false }
         );
       } else {
         // Separate expenses (replace)
@@ -291,11 +291,11 @@ export default function CaptureReceipt() {
           description: it.description ?? `Item ${idx + 1}`,
           amount: Number(it.amount ?? 0),
           paidBy: it.paidById ?? defaultPayer,
-          splitAmong: it.splitAmongIds?.length ? it.splitAmongIds : everyone,
+          splitAmong: [],
           // optional: category: it.category
         }));
 
-        setExpenses(list, { overwrite: true, assignToAllIfEmpty: true });
+        setExpenses(list, { overwrite: true, assignToAllIfEmpty: false });
       }
 
       // ✅ NEW: open split choice sheet instead of navigating immediately

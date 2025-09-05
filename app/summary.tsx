@@ -1,9 +1,9 @@
 // app/summary.tsx
 import { View, Text, Pressable } from 'react-native';
 import { Link, router } from 'expo-router';
-import SummaryCard from '../src/components/SummaryCard';
-import { useSplitStore } from '../src/store/useSplitStore';
-import { useTheme } from '../src/providers/theme';
+import SummaryCard from '@/components/SummaryCard';
+import { useSplitStore } from '@/store/useSplitStore';
+import { useTheme } from '@/providers/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function SummaryScreen() {
@@ -43,7 +43,8 @@ export default function SummaryScreen() {
           >
             <Text style={{ color: theme.text }}>
               Heads up: receipt math is off by{' '}
-              <Text style={{ fontWeight: '800' }}>${Math.abs(discrepancy).toFixed(2)}</Text>. Tap <Text style={{ fontWeight: '800' }}>Edit Manually</Text> to adjust items, tax, or tip.
+              <Text style={{ fontWeight: '800' }}>${Math.abs(discrepancy).toFixed(2)}</Text>. Tap{' '}
+              <Text style={{ fontWeight: '800' }}>Edit Manually</Text> to adjust items, tax, or tip.
             </Text>
           </View>
         )}
@@ -53,19 +54,35 @@ export default function SummaryScreen() {
         {/* Actions */}
         <View style={{ marginTop: 16, gap: 10 }}>
           {/* Primary */}
-          <Link href="/split/assign" asChild>
+          {hasData ? (
+            <Link href="/split/assign" asChild>
+              <Pressable
+                style={{
+                  height: BTN_H,
+                  borderRadius: radius,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: theme.accent,
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Edit Manually</Text>
+              </Pressable>
+            </Link>
+          ) : (
             <Pressable
+              disabled
               style={{
                 height: BTN_H,
                 borderRadius: radius,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: theme.accent,
+                backgroundColor: '#6b7280',
+                opacity: 0.6,
               }}
             >
               <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Edit Manually</Text>
             </Pressable>
-          </Link>
+          )}
         </View>
 
         {/* Quiet footer link */}

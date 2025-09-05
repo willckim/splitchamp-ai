@@ -1,11 +1,18 @@
 // src/lib/ai.ts
 import Constants from 'expo-constants';
 
-export type ReceiptItem = { description: string; amount: number };
+export type ReceiptItem = {
+  id?: string;
+  description: string;
+  amount: number;
+  category?: 'food' | 'alcohol' | 'appetizer' | 'tax' | 'tip' | 'ignore';
+};
+
 export type ReceiptParse = {
   merchant?: string;
   date?: string;
   total?: number;
+  subtotal?: number; // NEW
   tax?: number;
   tip?: number;
   items: ReceiptItem[];
@@ -37,25 +44,49 @@ if (__DEV__) {
   console.log('[SplitChamp] apiBase =', apiBase);
 }
 
-/** Parse and normalize server response */
+// small fallback helpers
+const mkId = (desc: string, amt: number, idx: number) =>
+  `${(desc || 'Item').toLowerCase().slice(0, 24)}::${amt.toFixed(2)}::${idx}`;
+
+const coerceNum = (n: any) => (Number.isFinite(Number(n)) ? Number(n) : 0);
+
+/** Parse and normalize server response (tolerates legacy shapes) */
 function coerceReceipt(data: any): ReceiptParse {
   const parsed =
     typeof data?.output_text === 'string' ? JSON.parse(data.output_text) : data;
+
   if (!parsed?.items || !Array.isArray(parsed.items)) {
     throw new Error('AI response missing items[]');
   }
-  return parsed as ReceiptParse;
+
+  // normalize items and backfill id/category if missing
+  const items: ReceiptItem[] = parsed.items.map((it: any, i: number) => {
+    const amount = coerceNum(it?.amount);
+    const description = String(it?.description ?? `Item ${i + 1}`);
+    const id = typeof it?.id === 'string' && it.id.length ? it.id : mkId(description, amount, i);
+    const category = (it?.category as ReceiptItem['category']) ?? 'food';
+    return { id, description, amount, category };
+  });
+
+  const out: ReceiptParse = {
+    merchant: parsed.merchant ?? undefined,
+    date: parsed.date ?? undefined,
+    total: typeof parsed.total === 'number' ? parsed.total : coerceNum(parsed.total),
+    subtotal: typeof parsed.subtotal === 'number' ? parsed.subtotal : undefined,
+    tax: typeof parsed.tax === 'number' ? parsed.tax : coerceNum(parsed.tax),
+    tip: typeof parsed.tip === 'number' ? parsed.tip : coerceNum(parsed.tip),
+    items,
+    engine: parsed.engine ?? undefined,
+  };
+
+  return out;
 }
 
 /** Clamp numbers, preserve includeTaxTip undefined when not provided */
 function normalizeOpts(opts?: AnalyzeOptions): Partial<AnalyzeOptions> {
   const out: AnalyzeOptions = { ...opts };
-  if (typeof out.people === 'number') {
-    out.people = Math.max(1, Math.floor(out.people));
-  }
-  if (typeof out.tipPercent === 'number') {
-    out.tipPercent = Math.min(100, Math.max(0, Math.floor(out.tipPercent)));
-  }
+  if (typeof out.people === 'number') out.people = Math.max(1, Math.floor(out.people));
+  if (typeof out.tipPercent === 'number') out.tipPercent = Math.min(100, Math.max(0, Math.floor(out.tipPercent)));
   return out;
 }
 
@@ -63,17 +94,9 @@ function normalizeOpts(opts?: AnalyzeOptions): Partial<AnalyzeOptions> {
 function withQuery(baseUrl: string, opts?: AnalyzeOptions): string {
   if (!opts) return baseUrl;
   const parts: string[] = [];
-
-  if (typeof opts.includeTaxTip === 'boolean') {
-    parts.push(`include_tax_tip=${opts.includeTaxTip ? 'true' : 'false'}`);
-  }
-  if (typeof opts.people === 'number') {
-    parts.push(`people=${encodeURIComponent(String(opts.people))}`);
-  }
-  if (typeof opts.tipPercent === 'number') {
-    parts.push(`tip_percent=${encodeURIComponent(String(opts.tipPercent))}`);
-  }
-
+  if (typeof opts.includeTaxTip === 'boolean') parts.push(`include_tax_tip=${opts.includeTaxTip ? 'true' : 'false'}`);
+  if (typeof opts.people === 'number') parts.push(`people=${encodeURIComponent(String(opts.people))}`);
+  if (typeof opts.tipPercent === 'number') parts.push(`tip_percent=${encodeURIComponent(String(opts.tipPercent))}`);
   if (parts.length === 0) return baseUrl;
   const sep = baseUrl.includes('?') ? '&' : '?';
   return `${baseUrl}${sep}${parts.join('&')}`;
@@ -82,11 +105,7 @@ function withQuery(baseUrl: string, opts?: AnalyzeOptions): string {
 /** Read server error body, but mask HTML error pages (e.g., 502 proxy) */
 async function readErrorBodySafely(res: Response): Promise<string> {
   let text = '';
-  try {
-    text = await res.text();
-  } catch {
-    text = '';
-  }
+  try { text = await res.text(); } catch { text = ''; }
   const trimmed = text.trim().toLowerCase();
   if (trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html')) {
     return 'Server returned an HTML error page (likely 502 from host).';
@@ -114,33 +133,16 @@ export async function analyzeReceiptFromUri(
   const norm = normalizeOpts(opts);
 
   const form = new FormData();
-  form.append('file', {
-    uri: fileUri,
-    name: 'receipt.jpg',
-    type: 'image/jpeg',
-  } as any);
-
-  if (typeof norm.includeTaxTip === 'boolean') {
-    form.append('include_tax_tip', String(norm.includeTaxTip));
-  }
-  if (typeof norm.people === 'number') {
-    form.append('people', String(norm.people));
-  }
-  if (typeof norm.tipPercent === 'number') {
-    form.append('tip_percent', String(norm.tipPercent));
-  }
+  form.append('file', { uri: fileUri, name: 'receipt.jpg', type: 'image/jpeg' } as any);
+  if (typeof norm.includeTaxTip === 'boolean') form.append('include_tax_tip', String(norm.includeTaxTip));
+  if (typeof norm.people === 'number') form.append('people', String(norm.people));
+  if (typeof norm.tipPercent === 'number') form.append('tip_percent', String(norm.tipPercent));
 
   const url = withQuery(`${apiBase}/analyze-receipt`, norm);
 
   const t = withTimeout(90_000);
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Accept: 'application/json' },
-      body: form,
-      signal: t.signal,
-    });
-
+    const res = await fetch(url, { method: 'POST', headers: { Accept: 'application/json' }, body: form, signal: t.signal });
     if (!res.ok) {
       const text = await readErrorBodySafely(res);
       throw new Error(`AI analyze failed: ${res.status} ${text}`);
@@ -179,7 +181,6 @@ export async function analyzeReceipt(
       body: JSON.stringify(body),
       signal: t.signal,
     });
-
     if (!res.ok) {
       const text = await readErrorBodySafely(res);
       throw new Error(`AI analyze failed: ${res.status} ${text}`);

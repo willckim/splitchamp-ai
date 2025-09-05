@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from typing import Optional
-import os, requests, json, time, base64, hashlib
+import os, requests, json, time, base64, hashlib, re
 
 # --- Config / env ---
 load_dotenv()
@@ -17,6 +17,9 @@ ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "60"))
 RATE_WINDOW_SEC = int(os.environ.get("RATE_WINDOW_SEC", "3600"))
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))  # 10MB
+
+# When DI/GPT returns only a total but OCR looks rich, force a second parsing pass
+FORCE_SECOND_PASS_MIN_ITEMS = int(os.environ.get("FORCE_SECOND_PASS_MIN_ITEMS", "2"))
 
 def _to_bool(v: Optional[str], default: bool = False) -> bool:
     if v is None:
@@ -49,7 +52,7 @@ AZURE_API_VERSION_DOCS_OLD  = "2023-07-31"  # Form Recognizer (legacy)
 AZURE_API_VERSION_VISION    = "2024-02-01"  # Vision Image Analysis (Read)
 
 # --- App / CORS ---
-app = FastAPI(title="SplitChamp AI Backend", version="1.4.0")
+app = FastAPI(title="SplitChamp AI Backend", version="1.4.1")
 origins = [o.strip() for o in ALLOWED_ORIGINS.split(",")] if ALLOWED_ORIGINS else ["*"]
 app.add_middleware(
     CORSMiddleware,
@@ -82,7 +85,6 @@ class AnalyzeReq(BaseModel):
     image_base64: str
 
 class ReceiptItem(BaseModel):
-    # new optional fields are included but remain backward-compatible
     id: Optional[str] = None
     description: str
     amount: float
@@ -92,7 +94,7 @@ class AnalyzeResp(BaseModel):
     merchant: Optional[str] = None
     date: Optional[str] = None
     total: Optional[float] = None
-    subtotal: Optional[float] = None   # NEW: sum of non tax/tip line items
+    subtotal: Optional[float] = None
     tax: Optional[float] = None
     tip: Optional[float] = None
     items: list[ReceiptItem]
@@ -121,7 +123,7 @@ def health():
 
 @app.get("/")
 def root():
-    return {"name": "SplitChamp AI Backend", "version": "1.4.0", "health": "/health"}
+    return {"name": "SplitChamp AI Backend", "version": "1.4.1", "health": "/health"}
 
 # ---- Helpers ----
 def _to_b64_jpeg(raw: bytes) -> str:
@@ -130,14 +132,13 @@ def _to_b64_jpeg(raw: bytes) -> str:
     return base64.b64encode(raw).decode("utf-8")
 
 def _mk_id(desc: str, amt: float, idx: int) -> str:
-    # stable-ish id so client can assign items by id
     return hashlib.sha1(f"{desc}|{amt}|{idx}".encode("utf-8")).hexdigest()[:12]
 
 _ALC = ["beer","wine","lager","ipa","ale","stout","sauvignon","cabernet","merlot","riesling","pinot",
         "vodka","tequila","whiskey","bourbon","rum","sake","soju","cocktail","margarita","mojito","martini","negroni"]
 _NONALC = ["soda","coke","pepsi","sprite","fanta","lemonade","juice","coffee","latte","tea","mocktail"]
 _APPS = ["app","appetizer","starter","fries","nachos","wings","edamame","chips","guac","dip","bread","garlic","calamari"]
-_IGNORE = ["subtotal","balance","rounding","change","cash","card","auth","approval"]
+_IGNORE = ["subtotal","balance","rounding","change","cash","card","auth","approval","points"]
 
 def _category_of(name: str) -> str:
     s = (name or "").lower()
@@ -147,7 +148,7 @@ def _category_of(name: str) -> str:
     if any(k in s for k in _IGNORE): return "ignore"
     if any(k in s for k in _ALC): return "alcohol"
     if any(k in s for k in _APPS): return "appetizer"
-    if any(k in s for k in _NONALC): return "food"  # treated as food for splitting
+    # Non-alcoholic drinks count as "food" for splitting
     return "food"
 
 def _coerce_amounts(parsed: dict) -> dict:
@@ -158,7 +159,6 @@ def _coerce_amounts(parsed: dict) -> dict:
             it["amount"] = float(it.get("amount", 0))
         except Exception:
             it["amount"] = 0.0
-    # ensure subtotal exists
     if "subtotal" not in parsed:
         notax = sum(x.get("amount", 0) for x in parsed["items"] if x.get("category") not in ("tax","tip"))
         parsed["subtotal"] = round(float(notax), 2)
@@ -178,19 +178,24 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: O
                 continue
             if desc.upper() in skip_tokens:
                 continue
-            cleaned.append({"description": desc, "amount": round(amt, 2)})
+            # prefer model category if present; else infer later
+            cat = (it.get("category") or "").strip().lower() or None
+            cleaned.append({"description": desc, "amount": round(amt, 2), "category": cat})
         except Exception:
             continue
 
     # Merge duplicates by description (case-insensitive)
-    merged: dict[str, float] = {}
-    order_keys: list[str] = []  # preserve first-seen order for stable ids
+    merged: dict[str, dict] = {}
+    order_keys: list[str] = []
     for it in cleaned:
         k = it["description"].strip().lower()
         if k not in merged:
             order_keys.append(k)
-            merged[k] = 0.0
-        merged[k] = round(merged[k] + it["amount"], 2)
+            merged[k] = {"amount": 0.0, "category": it["category"]}
+        merged[k]["amount"] = round(merged[k]["amount"] + it["amount"], 2)
+        # keep first non-empty category if found
+        if not merged[k]["category"] and it["category"]:
+            merged[k]["category"] = it["category"]
 
     # Numbers reported by the model(s)
     tax = round(float(d.get("tax") or 0), 2)
@@ -199,8 +204,8 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: O
     # Build item list with id + category
     items_out = []
     for i, k in enumerate(order_keys):
-        amt = merged[k]
-        cat = _category_of(k)
+        amt = merged[k]["amount"]
+        cat = merged[k]["category"] or _category_of(k)
         items_out.append({
             "id": _mk_id(k, amt, i),
             "description": k.title(),
@@ -208,7 +213,7 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: O
             "category": cat
         })
 
-    sum_items = round(sum(x["amount"] for x in items_out if x["category"] not in ("tax","tip")), 2)
+    sum_items = round(sum(x["amount"] for x in items_out if x["category"] not in ("tax","tip","ignore")), 2)
 
     # If model didn’t extract a tip but user provided a tip %, derive one
     if tip == 0 and tip_percent_override is not None:
@@ -247,10 +252,7 @@ def _azure_analyze_receipt(image_bytes: bytes) -> Optional[dict]:
     if not (AZURE_USE_RECEIPT and DI_CONFIGURED):
         return None
 
-    headers = {
-        "Ocp-Apim-Subscription-Key": AZURE_DI_KEY,
-        "Content-Type": "application/octet-stream",
-    }
+    headers = {"Ocp-Apim-Subscription-Key": AZURE_DI_KEY, "Content-Type": "application/octet-stream"}
 
     # Try the new DI route first
     url_new = f"{AZURE_DI_ENDPOINT}/documentintelligence/documentModels/prebuilt-receipt:analyze?api-version={AZURE_API_VERSION_DOCS_NEW}"
@@ -275,7 +277,7 @@ def _azure_analyze_receipt(image_bytes: bytes) -> Optional[dict]:
 
     op_url = r.headers.get("operation-location") or r.headers.get("Operation-Location")
     if not op_url:
-        # Some regions return body with result synchronously (rare), try parse it
+        # Some regions return body with result synchronously
         try:
             data = r.json()
             analyze_result = data.get("analyzeResult") or data.get("result") or data
@@ -286,7 +288,7 @@ def _azure_analyze_receipt(image_bytes: bytes) -> Optional[dict]:
         print("Azure receipt: missing operation-location")
         return None
 
-    # Poll for result
+    # Poll
     result = None
     for _ in range(30):
         try:
@@ -393,29 +395,42 @@ def _azure_read_ocr(image_bytes: bytes) -> Optional[str]:
         return None
 
 # ---------- OpenAI helpers ----------
+_SYSTEM = {
+    "role": "system",
+    "content": (
+        "You are a precise receipt parser. Return ONLY valid JSON (no markdown). "
+        "Extract every purchasable line item with its price. "
+        "Ignore loyalty/points, cash/change, card metadata, balances, rounding, and headings. "
+        "If the receipt is a grocery-style list, you must return many items, not just totals."
+    )
+}
+
 def _openai_from_image(image_b64: str) -> dict:
     payload = {
         "model": MODEL,
         "response_format": {"type": "json_object"},
         "temperature": 0,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        "Extract line items from this receipt photo and return a SINGLE JSON object "
-                        "with fields: { merchant?: string, date?: string, total?: number, tax?: number, "
-                        "tip?: number, items: [{ description: string, amount: number }] }. "
-                        "Do not include any text outside the JSON."
-                    )
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
-                },
-            ],
-        }],
+        "messages": [
+            _SYSTEM,
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Return ONE JSON object with fields: "
+                            "{ merchant?: string, date?: string, total?: number, tax?: number, tip?: number, "
+                            "subtotal?: number, items: [{ description: string, amount: number, category?: 'food'|'alcohol'|'appetizer'|'tax'|'tip'|'ignore' }] } "
+                            "• Items must be the individual lines (e.g., 'Mizkan Gyoza Sauce 12oz'). "
+                            "• subtotal = sum of non-tax/tip items. "
+                            "• Use 'alcohol' for beer/wine/liquor; 'appetizer' for common starters; "
+                            "use 'tax' or 'tip' only for those lines; otherwise 'food'."
+                        )
+                    },
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}" }},
+                ],
+            },
+        ],
     }
     try:
         r = requests.post(
@@ -440,17 +455,21 @@ def _openai_from_text(text: str) -> Optional[dict]:
         "model": MODEL,
         "response_format": {"type": "json_object"},
         "temperature": 0,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text":
-                    "The following is raw OCR from a receipt. Return ONE JSON object with: "
-                    "{ merchant?: string, date?: string, total?: number, tax?: number, tip?: number, "
-                    "items: [{ description: string, amount: number }] }. Only return JSON."
-                },
-                {"type": "text", "text": text}
-            ],
-        }],
+        "messages": [
+            _SYSTEM,
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text":
+                        "The following is raw OCR from a receipt. Return ONE JSON object with: "
+                        "{ merchant?: string, date?: string, total?: number, tax?: number, tip?: number, subtotal?: number, "
+                        "items: [{ description: string, amount: number, category?: 'food'|'alcohol'|'appetizer'|'tax'|'tip'|'ignore' }] }. "
+                        "Extract EVERY purchasable line that has a price. Ignore loyalty/points/balances."
+                    },
+                    {"type": "text", "text": text}
+                ],
+            },
+        ],
     }
     try:
         r = requests.post(
@@ -491,14 +510,14 @@ async def analyze(
     tip_percent_q: Optional[float] = Query(default=None, alias="tip_percent"),
 ):
     try:
-        # ---- normalize knobs (form wins over query; env default if still None) ----
+        # ---- normalize knobs ----
         include_tax_tip_in = include_tax_tip_form if include_tax_tip_form is not None else include_tax_tip_q
         include_tax_tip_flag = RESTAURANT_INCLUDE_TAX_TIP_ITEMS if include_tax_tip_in is None else bool(include_tax_tip_in)
 
         people = people_form if people_form is not None else people_q
         tip_percent = tip_percent_form if tip_percent_form is not None else tip_percent_q
 
-        # Basic validation (soft bounds)
+        # basic validation
         if people is not None and (people < 1 or people > 50):
             raise HTTPException(status_code=400, detail="people must be between 1 and 50")
         if tip_percent is not None and (tip_percent < 0 or tip_percent > 100):
@@ -521,23 +540,32 @@ async def analyze(
             raise HTTPException(status_code=400, detail="Provide a 'file' (multipart) or 'image_base64' (JSON).")
 
         # ---- pipeline ----
-        # 1) Document Intelligence prebuilt receipts
+        # 1) Azure DI
         parsed = _azure_analyze_receipt(raw)
         if parsed and parsed.get("items"):
             out = _postprocess_receipt(parsed, include_tax_tip_flag, tip_percent_override=tip_percent)
-            out["engine"] = "azure_receipt"
-            return AnalyzeResp(**_coerce_amounts(out))
+            if len(out["items"]) >= FORCE_SECOND_PASS_MIN_ITEMS:
+                out["engine"] = "azure_receipt"
+                return AnalyzeResp(**_coerce_amounts(out))
 
-        # 2) Vision Read OCR → GPT
+        # 2) Azure Read OCR → GPT
         text = _azure_read_ocr(raw)
         if text:
             parsed_text = _openai_from_text(text)
             if parsed_text and parsed_text.get("items"):
                 out = _postprocess_receipt(parsed_text, include_tax_tip_flag, tip_percent_override=tip_percent)
-                out["engine"] = "azure_read_gpt"
-                return AnalyzeResp(**_coerce_amounts(out))
+                if len(out["items"]) >= FORCE_SECOND_PASS_MIN_ITEMS:
+                    out["engine"] = "azure_read_gpt"
+                    return AnalyzeResp(**_coerce_amounts(out))
+                # If too few items but OCR looks rich (many prices), try a stricter second pass
+                if _looks_like_many_prices(text):
+                    parsed_text2 = _openai_from_text(_force_itemization_prompt(text))
+                    if parsed_text2 and parsed_text2.get("items"):
+                        out2 = _postprocess_receipt(parsed_text2, include_tax_tip_flag, tip_percent_override=tip_percent)
+                        out2["engine"] = "azure_read_gpt_strict"
+                        return AnalyzeResp(**_coerce_amounts(out2))
 
-        # 3) Final fallback: GPT with image
+        # 3) GPT with image (vision)
         parsed_img = _openai_from_image(image_b64)
         out = _postprocess_receipt(parsed_img, include_tax_tip_flag, tip_percent_override=tip_percent)
         out["engine"] = "gpt_image"
@@ -548,3 +576,17 @@ async def analyze(
     except Exception as e:
         print("Analyze fatal error:", repr(e))
         raise HTTPException(status_code=502, detail="Analyzer crashed unexpectedly")
+
+# --- heuristics for second pass ---
+_PRICE_RE = re.compile(r"\$?\d{1,3}(?:[,\d]{0,3})?\.\d{2}")
+
+def _looks_like_many_prices(text: str) -> bool:
+    # If OCR has many price patterns but the parsed result had <= 1 item, force stricter pass
+    return len(_PRICE_RE.findall(text)) >= 6  # tweak as needed
+
+def _force_itemization_prompt(text: str) -> str:
+    return (
+        "Extract EVERY purchasable line with its price from this OCR. "
+        "Return ONLY JSON with fields {subtotal, tax?, tip?, total?, items:[{description, amount, category?}]}. "
+        "Ignore points/balance/cash/change/payment. Here is the OCR:\n\n" + text
+    )
