@@ -2,15 +2,16 @@
 import React, { memo, useMemo } from 'react';
 import { View, Text } from 'react-native';
 import { useSplitStore } from '@/store/useSplitStore';
-import { styles } from '@/styles';
+import { makeStyles } from '@/styles';        // ✅ use makeStyles
 import { useTheme } from '@/providers/theme';
 
 const fmt = (n: number) => (Number.isFinite(n) ? `$${n.toFixed(2)}` : '$0.00');
 
 function SummaryCardImpl() {
   const { theme } = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);  // ✅ build styles
 
-  // ✅ one selector per value (stable, prevents infinite loop)
+  // one selector per value
   const participants = useSplitStore(s => s.participants);
   const expenses     = useSplitStore(s => s.expenses);
   const transfers    = useSplitStore(s => s.transfers);
@@ -33,18 +34,16 @@ function SummaryCardImpl() {
     [transfers]
   );
 
-  const receiptTotal = Number(totals?.receipt ?? fallbackReceiptTotal);
+  const receiptTotal  = Number(totals?.receipt ?? fallbackReceiptTotal);
   const totalToSettle = Number(totals?.toSettle ?? fallbackToSettle);
 
   if (!transfers.length) {
     return (
       <View style={{ marginTop: 12 }}>
-        <View
-          style={[
-            styles.subtleCard,
-            { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 },
-          ]}
-        >
+        <View style={[
+          styles.subtleCard,
+          { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }
+        ]}>
           <Text style={{ fontWeight: '800', marginBottom: 4, color: theme.text }}>
             Nothing to settle
           </Text>
@@ -57,12 +56,10 @@ function SummaryCardImpl() {
   }
 
   return (
-    <View
-      style={[
-        styles.card,
-        { marginTop: 12, backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 },
-      ]}
-    >
+    <View style={[
+      styles.card,
+      { marginTop: 12, backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }
+    ]}>
       <Text style={{ fontWeight: '800', fontSize: 18, marginBottom: 8, color: theme.text }}>
         Who owes who what
       </Text>
@@ -79,25 +76,16 @@ function SummaryCardImpl() {
         </View>
       )}
 
-      <View
-        style={{
-          height: 1,
-          backgroundColor: theme.border,
-          marginVertical: 12,
-          opacity: 0.9,
-        }}
-      />
+      <View style={{ height: 1, backgroundColor: theme.border, marginVertical: 12, opacity: 0.9 }} />
 
       {expenses.length > 0 && (
         <Text style={{ color: theme.text, opacity: 0.8, marginBottom: 4 }}>
-          Receipt total:{' '}
-          <Text style={{ fontWeight: '800', color: theme.text }}>{fmt(receiptTotal)}</Text>
+          Receipt total: <Text style={{ fontWeight: '800', color: theme.text }}>{fmt(receiptTotal)}</Text>
         </Text>
       )}
 
       <Text style={{ color: theme.text, opacity: 0.85 }}>
-        Total to settle:{' '}
-        <Text style={{ fontWeight: '800', color: theme.text }}>{fmt(totalToSettle)}</Text>
+        Total to settle: <Text style={{ fontWeight: '800', color: theme.text }}>{fmt(totalToSettle)}</Text>
       </Text>
     </View>
   );

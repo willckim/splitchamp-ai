@@ -30,6 +30,9 @@ export interface SplitState {
   expenses: Expense[];
   transfers: Transfer[];
 
+  /** Tip captured from Tip Helper but not yet reconciled with the parsed receipt. */
+  pendingTip: number | null;
+
   addParticipant: (name: string) => void;
   removeParticipant: (id: string) => void;
   addExpense: (e: Omit<Expense, 'id'>) => void;
@@ -56,6 +59,12 @@ export interface SplitState {
 
   /** Re-run totals/settlement computation (exposed for batch edits). */
   recompute: () => void;
+
+  // Tip-helper reconciliation
+  setPendingTip: (amount: number | null) => void;
+  clearPendingTip: () => void;
+  /** Apply pendingTip to the latest itemized expense, then clear it. */
+  reconcilePendingTip: (strategy: 'add' | 'overwrite' | 'skip') => boolean;
 
   // Optional helpers that you already had
   autoAssignItemsByName: () => void;
@@ -98,6 +107,8 @@ export const useSplitStore = create<SplitState>()(
         expenses: [],
         transfers: [],
 
+        pendingTip: null,
+
         // expose recompute so UI can call it
         recompute,
 
@@ -136,7 +147,7 @@ export const useSplitStore = create<SplitState>()(
           set({ transfers: computeSettlements(participants, expenses) });
         },
 
-        resetAll: () => set({ participants: [], expenses: [], transfers: [] }),
+        resetAll: () => set({ participants: [], expenses: [], transfers: [], pendingTip: null }),
 
         setParticipants: (p) => {
           set({ participants: p });
@@ -222,6 +233,49 @@ export const useSplitStore = create<SplitState>()(
 
           set({ expenses: next });
           recompute();
+        },
+
+        // --- Tip-helper reconciliation API
+        setPendingTip: (amount) => set({ pendingTip: (amount == null ? null : Number(amount)) }),
+        clearPendingTip: () => set({ pendingTip: null }),
+        reconcilePendingTip: (strategy) => {
+          const pending = get().pendingTip;
+          if (pending == null) return false;
+
+          // latest/only itemized expense
+          const eIdx = [...get().expenses].map((e, i) => ({ e, i }))
+            .reverse()
+            .find(({ e }) => e.splitMethod === 'itemized' && Array.isArray(e.items))?.i;
+
+          if (eIdx == null) {
+            // nothing to apply to, just clear to avoid double add later
+            set({ pendingTip: null });
+            return false;
+          }
+
+          const exps = [...get().expenses];
+          const e = { ...exps[eIdx] } as Expense & { tip?: number; tax?: number };
+          const oldTip = safeNum(e.tip);
+          const baseWithoutTip = safeNum(e.amount) - oldTip;
+
+          let newTip = oldTip;
+          if (strategy === 'add') newTip = oldTip + safeNum(pending);
+          else if (strategy === 'overwrite') newTip = safeNum(pending);
+          // 'skip' leaves newTip = oldTip
+
+          // write back only for add/overwrite
+          if (strategy !== 'skip') {
+            e.tip = Number(newTip.toFixed(2));
+            e.amount = Number((baseWithoutTip + newTip).toFixed(2));
+            exps[eIdx] = e;
+            set({ expenses: exps, pendingTip: null });
+            recompute();
+            return true;
+          }
+
+          // skip -> just clear
+          set({ pendingTip: null });
+          return false;
         },
 
         // -------- Existing helpers ----------
@@ -322,6 +376,7 @@ export const useSplitStore = create<SplitState>()(
       partialize: (s) => ({
         participants: s.participants,
         expenses: s.expenses,
+        pendingTip: s.pendingTip,
       }) as any,
       onRehydrateStorage: () => (state) => {
         state?._setHasHydrated(true);

@@ -1,11 +1,13 @@
 // app/index.tsx
 import { Link } from 'expo-router';
 import { View, Text, Pressable } from 'react-native';
-import { styles } from '../src/styles';
+import { useMemo } from 'react';
+import { makeStyles } from '../src/styles';
 import { useTheme } from '../src/providers/theme';
 
 export default function Index() {
   const { theme } = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
 
   return (
     <View style={[styles.screen, styles.landingWrap]}>
@@ -25,14 +27,16 @@ export default function Index() {
           <Text style={styles.logoEmoji}>🧾</Text>
         </View>
 
-        <Text style={[styles.brandTitle, { color: theme.text }]}>SplitChamp AI</Text>
+        <Text style={[styles.brandTitle, { color: theme.text }]}>
+          SplitChamp AI
+        </Text>
         <Text style={[styles.brandTag, { color: theme.text, opacity: 0.7 }]}>
           Split receipts in seconds
         </Text>
 
         <Text style={[styles.brandHint, { color: theme.text, opacity: 0.9 }]}>
-          📸 Use AI for almost all receipts. Manual entry is a fallback for quick even
-          splits or when you can’t take a photo.
+          📸 Use AI for almost all receipts. Tip Helper is available when you just need
+          to quickly calculate tax & tip.
         </Text>
       </View>
 
@@ -57,8 +61,8 @@ export default function Index() {
         </Pressable>
       </Link>
 
-      {/* Manual Entry button */}
-      <Link href="/manual" asChild>
+      {/* Tip Helper button (theme-safe colors, same layout) */}
+      <Link href="/tip-helper" asChild>
         <Pressable
           style={{
             flexDirection: 'row',
@@ -67,13 +71,15 @@ export default function Index() {
             gap: 8,
             paddingVertical: 16,
             borderRadius: 12,
-            backgroundColor: theme.text,
+            backgroundColor: theme.card,     // was theme.text (too bright in dark themes)
+            borderWidth: 1,
+            borderColor: theme.border,
             marginTop: 12,
           }}
         >
-          <Text style={{ fontSize: 18 }}>✍️</Text>
-          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>
-            Manual Entry
+          <Text style={{ fontSize: 18 }}>💡</Text>
+          <Text style={{ color: theme.text, fontWeight: '800', fontSize: 16 }}>
+            Tip Helper
           </Text>
         </Pressable>
       </Link>

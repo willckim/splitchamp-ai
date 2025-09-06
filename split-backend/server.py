@@ -164,7 +164,14 @@ def _coerce_amounts(parsed: dict) -> dict:
         parsed["subtotal"] = round(float(notax), 2)
     return parsed
 
-def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: Optional[float] = None) -> dict:
+def _postprocess_receipt(
+    d: dict,
+    include_tax_tip: bool,
+    tip_percent_override: Optional[float] = None,
+    tip_amount_override: Optional[float] = None,
+    tax_amount_override: Optional[float] = None,
+    lock_paper_total: bool = False,
+) -> dict:
     raw_items = d.get("items") or []
     cleaned: list[dict] = []
 
@@ -178,7 +185,6 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: O
                 continue
             if desc.upper() in skip_tokens:
                 continue
-            # prefer model category if present; else infer later
             cat = (it.get("category") or "").strip().lower() or None
             cleaned.append({"description": desc, "amount": round(amt, 2), "category": cat})
         except Exception:
@@ -193,7 +199,6 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: O
             order_keys.append(k)
             merged[k] = {"amount": 0.0, "category": it["category"]}
         merged[k]["amount"] = round(merged[k]["amount"] + it["amount"], 2)
-        # keep first non-empty category if found
         if not merged[k]["category"] and it["category"]:
             merged[k]["category"] = it["category"]
 
@@ -215,22 +220,31 @@ def _postprocess_receipt(d: dict, include_tax_tip: bool, tip_percent_override: O
 
     sum_items = round(sum(x["amount"] for x in items_out if x["category"] not in ("tax","tip","ignore")), 2)
 
-    # If model didn’t extract a tip but user provided a tip %, derive one
-    if tip == 0 and tip_percent_override is not None:
+    # ----- Apply overrides / percent logic (no double tipping) -----
+    if tax_amount_override is not None:
+        tax = round(float(tax_amount_override), 2)
+
+    if tip_amount_override is not None:
+        tip = round(float(tip_amount_override), 2)
+    elif tip == 0 and tip_percent_override is not None:
         base_for_tip = sum_items + (tax if include_tax_tip else 0.0)
         tip = round((base_for_tip * float(tip_percent_override)) / 100.0, 2)
 
-    # Total reconciliation
-    total = d.get("total")
-    if total is None or not isinstance(total, (int, float)):
-        total = round(sum_items + tax + tip, 2)
-    else:
-        total = round(float(total), 2)
-        computed = round(sum_items + tax + tip, 2)
-        if abs(total - computed) <= 0.02:
-            total = computed
+    # ----- Total reconciliation -----
+    computed = round(sum_items + tax + tip, 2)
+    total_field = d.get("total")
 
-    # Optionally include tax/tip as line items (with ids + categories)
+    if lock_paper_total and isinstance(total_field, (int, float)):
+        total = round(float(total_field), 2)  # respect on-paper total exactly
+    else:
+        if total_field is None or not isinstance(total_field, (int, float)):
+            total = computed
+        else:
+            total = round(float(total_field), 2)
+            if abs(total - computed) <= 0.02:
+                total = computed
+
+    # Optionally include tax/tip as line items
     if include_tax_tip:
         if tax > 0:
             items_out.append({"id": _mk_id("tax", tax, 99901), "description": "Tax", "amount": tax, "category": "tax"})
@@ -503,11 +517,17 @@ async def analyze(
     include_tax_tip_form: Optional[bool] = Form(default=None, alias="include_tax_tip"),
     people_form: Optional[int] = Form(default=None, alias="people"),
     tip_percent_form: Optional[float] = Form(default=None, alias="tip_percent"),
+    tip_amount_override_form: Optional[float] = Form(default=None, alias="tip_amount"),
+    tax_amount_override_form: Optional[float] = Form(default=None, alias="tax_amount"),
+    lock_paper_total_form: Optional[bool] = Form(default=None, alias="lock_paper_total"),
 
     # knobs via query (fallback)
     include_tax_tip_q: Optional[bool] = Query(default=None, alias="include_tax_tip"),
     people_q: Optional[int] = Query(default=None, alias="people"),
     tip_percent_q: Optional[float] = Query(default=None, alias="tip_percent"),
+    tip_amount_override_q: Optional[float] = Query(default=None, alias="tip_amount"),
+    tax_amount_override_q: Optional[float] = Query(default=None, alias="tax_amount"),
+    lock_paper_total_q: Optional[bool] = Query(default=None, alias="lock_paper_total"),
 ):
     try:
         # ---- normalize knobs ----
@@ -517,11 +537,20 @@ async def analyze(
         people = people_form if people_form is not None else people_q
         tip_percent = tip_percent_form if tip_percent_form is not None else tip_percent_q
 
+        tip_amount_override = tip_amount_override_form if tip_amount_override_form is not None else tip_amount_override_q
+        tax_amount_override = tax_amount_override_form if tax_amount_override_form is not None else tax_amount_override_q
+        lock_paper_total = (lock_paper_total_form
+                            if lock_paper_total_form is not None else (lock_paper_total_q or False))
+
         # basic validation
         if people is not None and (people < 1 or people > 50):
             raise HTTPException(status_code=400, detail="people must be between 1 and 50")
         if tip_percent is not None and (tip_percent < 0 or tip_percent > 100):
             raise HTTPException(status_code=400, detail="tip_percent must be between 0 and 100")
+        if tip_amount_override is not None and tip_amount_override < 0:
+            raise HTTPException(status_code=400, detail="tip_amount must be >= 0")
+        if tax_amount_override is not None and tax_amount_override < 0:
+            raise HTTPException(status_code=400, detail="tax_amount must be >= 0")
 
         # ---- read image ----
         if file is not None:
@@ -543,7 +572,14 @@ async def analyze(
         # 1) Azure DI
         parsed = _azure_analyze_receipt(raw)
         if parsed and parsed.get("items"):
-            out = _postprocess_receipt(parsed, include_tax_tip_flag, tip_percent_override=tip_percent)
+            out = _postprocess_receipt(
+                parsed,
+                include_tax_tip_flag,
+                tip_percent_override=tip_percent,
+                tip_amount_override=tip_amount_override,
+                tax_amount_override=tax_amount_override,
+                lock_paper_total=lock_paper_total,
+            )
             if len(out["items"]) >= FORCE_SECOND_PASS_MIN_ITEMS:
                 out["engine"] = "azure_receipt"
                 return AnalyzeResp(**_coerce_amounts(out))
@@ -553,7 +589,14 @@ async def analyze(
         if text:
             parsed_text = _openai_from_text(text)
             if parsed_text and parsed_text.get("items"):
-                out = _postprocess_receipt(parsed_text, include_tax_tip_flag, tip_percent_override=tip_percent)
+                out = _postprocess_receipt(
+                    parsed_text,
+                    include_tax_tip_flag,
+                    tip_percent_override=tip_percent,
+                    tip_amount_override=tip_amount_override,
+                    tax_amount_override=tax_amount_override,
+                    lock_paper_total=lock_paper_total,
+                )
                 if len(out["items"]) >= FORCE_SECOND_PASS_MIN_ITEMS:
                     out["engine"] = "azure_read_gpt"
                     return AnalyzeResp(**_coerce_amounts(out))
@@ -561,13 +604,27 @@ async def analyze(
                 if _looks_like_many_prices(text):
                     parsed_text2 = _openai_from_text(_force_itemization_prompt(text))
                     if parsed_text2 and parsed_text2.get("items"):
-                        out2 = _postprocess_receipt(parsed_text2, include_tax_tip_flag, tip_percent_override=tip_percent)
+                        out2 = _postprocess_receipt(
+                            parsed_text2,
+                            include_tax_tip_flag,
+                            tip_percent_override=tip_percent,
+                            tip_amount_override=tip_amount_override,
+                            tax_amount_override=tax_amount_override,
+                            lock_paper_total=lock_paper_total,
+                        )
                         out2["engine"] = "azure_read_gpt_strict"
                         return AnalyzeResp(**_coerce_amounts(out2))
 
         # 3) GPT with image (vision)
         parsed_img = _openai_from_image(image_b64)
-        out = _postprocess_receipt(parsed_img, include_tax_tip_flag, tip_percent_override=tip_percent)
+        out = _postprocess_receipt(
+            parsed_img,
+            include_tax_tip_flag,
+            tip_percent_override=tip_percent,
+            tip_amount_override=tip_amount_override,
+            tax_amount_override=tax_amount_override,
+            lock_paper_total=lock_paper_total,
+        )
         out["engine"] = "gpt_image"
         return AnalyzeResp(**_coerce_amounts(out))
 
